@@ -33,42 +33,170 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  let currentPage = 1;
+  const resultsPerPage = 10;
+  let allPostings = [];
+  let currentQuery = "";
+
   function displayResults(results, query) {
     if (!searchResultsDiv) return;
 
     searchResultsDiv.innerHTML = ""; // Clear previous results
+    currentPage = 1; // Reset to first page for new search
+    currentQuery = query;
 
-    const searchTime = results[0]
-    const queryResults = results[1]
+    const searchTime = results[0];
+    const queryResults = results[1];
 
-    if (queryResults.length === 0) {
+    allPostings = [];
+    if (queryResults && queryResults.length > 0) {
+      queryResults.forEach(([_, postings]) => {
+        allPostings.push(...postings);
+      });
+    }
+
+    if (allPostings.length === 0) {
       searchResultsDiv.innerHTML = "<p>No results found.</p>";
       return;
     }
 
-    const resultsCount = queryResults.reduce((count, [_, postings]) => count + postings.length, 0);
-
     const searchOverview = document.createElement("div");
-    searchOverview.innerHTML = `${resultsCount} search results found for <em>${query}</em> in ${searchTime.toFixed(2)} ms`;
+    searchOverview.innerHTML = `${allPostings.length} search results found for <em>${query}</em> in ${searchTime.toFixed(2)} ms`;
     searchResultsDiv.appendChild(searchOverview);
 
-    queryResults.forEach(([term, postings]) => {
-      const termSection = document.createElement("div");
-      termSection.classList.add("term-section");
+    renderPage();
+    renderPaginationControls();
+  }
 
-      const termHeader = document.createElement("h3");
-      termHeader.textContent = `Term: ${term}`;
-      termSection.appendChild(termHeader);
+  function renderPage() {
+    if (!searchResultsDiv) return;
 
-      const postingsList = document.createElement("ul");
-      postings.forEach(([docId, tf, positions]) => {
-        const item = document.createElement("li");
-        item.textContent = `Document ID: ${docId}, Frequency: ${tf}, Positions: [${positions.join(", ")}]`;
-        postingsList.appendChild(item);
-      });
+    // Clear only the results, not the overview and pagination controls
+    const existingResultsContainer = searchResultsDiv.querySelector("#results-container");
+    if (existingResultsContainer) {
+      existingResultsContainer.innerHTML = "";
+    } else {
+      const newResultsContainer = document.createElement("div");
+      newResultsContainer.id = "results-container";
+      searchResultsDiv.appendChild(newResultsContainer);
+    }
+    
+    const resultsContainer = searchResultsDiv.querySelector("#results-container") || searchResultsDiv;
 
-      termSection.appendChild(postingsList);
-      searchResultsDiv.appendChild(termSection);
+
+    const startIndex = (currentPage - 1) * resultsPerPage;
+    const endIndex = startIndex + resultsPerPage;
+    const paginatedPostings = allPostings.slice(startIndex, endIndex);
+
+    paginatedPostings.forEach(([docId, tf, positions]) => {
+      const docElement = document.createElement("div");
+      docElement.classList.add("document-result");
+
+      const titleElement = document.createElement("h3");
+      titleElement.textContent = `Document ${docId}`;
+      docElement.appendChild(titleElement);
+
+      const previewElement = document.createElement("p");
+      previewElement.textContent = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.";
+      docElement.appendChild(previewElement);
+      
+      // const detailsElement = document.createElement("p");
+      // detailsElement.classList.add("document-details");
+      // detailsElement.textContent = `TF: ${tf}, Positions: [${positions.join(", ")}]`;
+      // docElement.appendChild(detailsElement);
+
+      resultsContainer.appendChild(docElement);
     });
+  }
+
+  function renderPaginationControls() {
+    if (!searchResultsDiv) return;
+
+    let paginationDiv = searchResultsDiv.querySelector(".pagination-controls");
+    if (paginationDiv) {
+      paginationDiv.innerHTML = ""; // Clear existing controls
+    } else {
+      paginationDiv = document.createElement("div");
+      paginationDiv.classList.add("pagination-controls");
+      searchResultsDiv.appendChild(paginationDiv);
+    }
+
+    const totalPages = Math.ceil(allPostings.length / resultsPerPage);
+
+    if (totalPages <= 1) {
+      return;
+    }
+
+    // Previous Button
+    const previousButton = document.createElement("button");
+    previousButton.textContent = "Previous";
+    previousButton.classList.add("search-button-style");
+    if (currentPage === 1) {
+      previousButton.style.display = "none"; // Hide if on the first page
+    }
+    previousButton.addEventListener("click", () => {
+      if (currentPage > 1) {
+        currentPage--;
+        renderPage();
+        renderPaginationControls();
+      }
+    });
+    paginationDiv.appendChild(previousButton);
+
+    // Page Number Buttons
+    const maxButtonsToDisplay = 10;
+    let startPage, endPage;
+
+    if (totalPages <= maxButtonsToDisplay) {
+      // Less than or equal to 10 pages, show all
+      startPage = 1;
+      endPage = totalPages;
+    } else {
+      // More than 10 pages, calculate window
+      const pagesBeforeCurrent = 5; // Aim to have 5 pages before current (making current the 6th)
+      const pagesAfterCurrent = maxButtonsToDisplay - 1 - pagesBeforeCurrent; // 4 pages after
+
+      startPage = currentPage - pagesBeforeCurrent;
+      endPage = currentPage + pagesAfterCurrent;
+
+      if (startPage < 1) {
+        startPage = 1;
+        endPage = maxButtonsToDisplay;
+      } else if (endPage > totalPages) {
+        endPage = totalPages;
+        startPage = totalPages - maxButtonsToDisplay + 1;
+      }
+    }
+
+    for (let i = startPage; i <= endPage; i++) {
+      const pageButton = document.createElement("button");
+      pageButton.textContent = i;
+      pageButton.classList.add("pagination-button");
+      if (i === currentPage) {
+        pageButton.classList.add("active"); // Highlight current page
+      }
+      pageButton.addEventListener("click", () => {
+        currentPage = i;
+        renderPage();
+        renderPaginationControls();
+      });
+      paginationDiv.appendChild(pageButton);
+    }
+
+    // Next Button
+    const nextButton = document.createElement("button");
+    nextButton.textContent = "Next";
+    nextButton.classList.add("search-button-style");
+    if (currentPage === totalPages) {
+      nextButton.style.display = "none"; // Hide if on the last page
+    }
+    nextButton.addEventListener("click", () => {
+      if (currentPage < totalPages) {
+        currentPage++;
+        renderPage();
+        renderPaginationControls();
+      }
+    });
+    paginationDiv.appendChild(nextButton);
   }
 });

@@ -62,3 +62,28 @@ h1 {
 .result-item a:hover {
     text-decoration: underline;
 }
+
+.pagination-controls {
+    margin-top: 20px;
+    text-align: center;
+}
+
+.pagination-button, .search-button-style {
+    margin: 0 5px;
+    padding: 8px 12px;
+    border: 1px solid #ccc;
+    background-color: #f0f0f0;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.pagination-button.active {
+    background-color: #007bff;
+    color: white;
+    border-color: #007bff;
+    font-weight: bold;
+}
+
+.pagination-button:hover:not(.active) {
+    background-color: #e0e0e0;
+}

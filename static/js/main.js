@@ -23,7 +23,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const response = await fetch(`/search?q=${encodeURIComponent(query)}`);
       const results = await response.json(); // Parse the JSON response
 
-      displayResults(results);
+      displayResults(results, query);
     } catch (error) {
       console.error("Error fetching search results:", error);
       if (searchResultsDiv) {
@@ -33,17 +33,26 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  function displayResults(results) {
+  function displayResults(results, query) {
     if (!searchResultsDiv) return;
 
     searchResultsDiv.innerHTML = ""; // Clear previous results
 
-    if (results.length === 0) {
+    const searchTime = results[0]
+    const queryResults = results[1]
+
+    if (queryResults.length === 0) {
       searchResultsDiv.innerHTML = "<p>No results found.</p>";
       return;
     }
 
-    results.forEach(([term, postings]) => {
+    const resultsCount = queryResults.reduce((count, [_, postings]) => count + postings.length, 0);
+
+    const searchOverview = document.createElement("div");
+    searchOverview.innerHTML = `${resultsCount} search results found for <em>${query}</em> in ${searchTime.toFixed(2)} ms`;
+    searchResultsDiv.appendChild(searchOverview);
+
+    queryResults.forEach(([term, postings]) => {
       const termSection = document.createElement("div");
       termSection.classList.add("term-section");
 

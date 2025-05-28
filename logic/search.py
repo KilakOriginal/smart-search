@@ -7,7 +7,8 @@ import re
 import shutil
 import struct
 import io
-from typing import Union
+import bisect
+from typing import Union, List, Tuple, Dict
 
 WDIR = Path(__file__).resolve().parent.parent / "static"
 DEFAULT_OUTPUT_DIR = WDIR / "index"
@@ -75,21 +76,6 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
-def setup_logging(args: argparse.Namespace) -> None:
-    """
-    Configure logging based on verbosity arguments.
-
-    Args:
-        args (argparse.Namespace): Parsed command-line arguments.
-    """
-    if args.debug:
-        logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
-    elif args.verbose:
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-    elif args.quiet:
-        logging.basicConfig(level=logging.CRITICAL, format="%(asctime)s - %(levelname)s - %(message)s")
-    else:
-        logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s")
 
 def get_normalised_word_frequency(source_path: Path, content_file_name: str, max_documents: int = 0) -> Union[tuple[dict[str, tuple[float, int]], int], None]:
     """
@@ -567,16 +553,16 @@ def build_skip_list(dictionary_path: Path, step_size: int = 1000) -> int:
 
     return 0
 
-def load_dictionary(file_path: Path) -> Union[dict[str, int], None]:
+def load_dictionary(file_path: Path) -> Union[Dict[str, int], None]:
     """
     Loads a dictionary from a file.
-    The file is expected to have lines in the format: term<tab>offset.
+    The file is expected to have lines in the format: term<tab>offset sorted lexicographically by term.
 
     Args:
         file_path (Path): Path to the dictionary file.
 
     Returns:
-        Union[dict[str, int], None]: A dictionary mapping terms to their integer offsets.
+        Union[Dict[str, int], None]: A dictionary mapping terms to their integer offsets.
                                      Returns None if the file is not found or an error occurs.
     """
     if not file_path.is_file():
@@ -588,13 +574,13 @@ def load_dictionary(file_path: Path) -> Union[dict[str, int], None]:
         with open(file_path, 'r', encoding='utf-8') as f:
             for line in f:
                 try:
-                    term, offset = line.strip().split('\t')
-                    dictionary[term] = int(offset)
+                    term, offset_str = line.strip().split('\t')
+                    dictionary[term] = int(offset_str)
                 except ValueError:
                     logging.warning(f"Malformed line in dictionary: {line.strip()}. Skipping.")
                     continue
                 except Exception as e:
-                    logging.error(f"Error processing line '{line}': {e}")
+                    logging.error(f"Error processing line '{line.strip()}': {e}")
                     continue
     except Exception as e:
         logging.error(f"Error loading dictionary file '{file_path}': {e}")
@@ -602,7 +588,7 @@ def load_dictionary(file_path: Path) -> Union[dict[str, int], None]:
 
     return dictionary
 
-def get_postings(posting_file_path: Path, offsets: list[tuple[int, int]], terms: list[str]) -> Union[list[tuple[str, list[tuple[int, int, list[int]]]]], None]:
+def get_postings(posting_file_path: Path, offsets: List[Tuple[int, int]], terms: List[str]) -> Union[List[Tuple[str, List[Tuple[int, int, List[int]]]]], None]:
     """
     Retrieves postings for a list of terms given their start and end offsets in the postings file.
 
@@ -684,19 +670,22 @@ def get_postings(posting_file_path: Path, offsets: list[tuple[int, int]], terms:
 
     return result
 
-def direct_search(term: str, dictionary: dict[str, int], postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings") -> Union[list[tuple[int, int, list[int]]], None]:
+def direct_search(term: str,
+                  dictionary_items: List[Tuple[str, int]],
+                  postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings") -> Union[List[Tuple[str, List[Tuple[int, int, List[int]]]]], None]:
     """
     Retrieves all postings for a given search term using the dictionary.
 
     Args:
         term (str): The search term.
-        dictionary (dict[str, int]): The loaded dictionary (term -> start_offset).
+        dictionary_items (List[Tuple[str, int]]): The pre-loaded dictionary items 
+                                                         (term, offset_in_postings_file), sorted by term.
         postings_file_path (Path): Path to the postings file.
 
     Returns:
-        Union[list[tuple[int, int, list[int]]], None]: 
+        Union[List[Tuple[int, int, List[int]]], None]:
             A list of postings for the term. Each posting is (doc_id, term_frequency, positions).
-            Returns an empty list ([]) if the term is not found in the dictionary.
+            Returns an empty list ([]) if the term is not found.
             Returns None if an error occurs during postings retrieval.
     """
     logging.debug(f"Getting document IDs for term '{term}'")
@@ -706,134 +695,90 @@ def direct_search(term: str, dictionary: dict[str, int], postings_file_path: Pat
         return None
 
     term = term.lower()
-    if term not in dictionary:
-        logging.warning(f"Term '{term}' not found in dictionary.")
+
+    idx = bisect.bisect_left(dictionary_items, term, key=lambda item: item[0])
+
+    term_start_offset = -1
+    term_found = False
+
+    if idx < len(dictionary_items) and dictionary_items[idx][0] == term:
+        term_start_offset = dictionary_items[idx][1]
+        term_found = True
+    
+    if not term_found:
+        logging.debug(f"Term '{term}' not found in dictionary.")
         return []
 
-    term_start_offset = dictionary[term]
-    term_end_offset = -1 # Default to -1 for EOF if no next term is found
+    term_end_offset = -1
+    if idx + 1 < len(dictionary_items):
+        # The end_offset for the current term is the start_offset of the next term
+        term_end_offset = dictionary_items[idx+1][1]
+    # If it's the last term in the dictionary, term_end_offset remains -1 (read to EOF)
 
-    # Determine end offset for current term's postings data
-    sorted_dictionary_items = sorted(dictionary.items())
+    postings_result = get_postings(postings_file_path, [(term_start_offset, term_end_offset)], [term])
 
-    for i, (t, offset) in enumerate(sorted_dictionary_items):
-        if t == term:
-            if i + 1 < len(sorted_dictionary_items):
-                _, next_term_offset = sorted_dictionary_items[i+1]
-                term_end_offset = next_term_offset
-            break # Found the term, established its span
-
-    postings_result = get_postings(postings_file_path, [(term_start_offset, term_end_offset)], [term.lower()])
-    
     if postings_result is None:
-        return None # Error occurred in get_postings
-    if not postings_result: # Should not happen if term was in dictionary and get_postings succeeded
+        return None
+    if not postings_result: # Should not happen if term was in dictionary
         logging.warning(f"direct_search: get_postings returned empty for found term '{term}'.")
         return []
-        
-    # postings_result is list[tuple[str, list_of_postings_for_that_str]]
-    # We expect one entry: (term, its_postings_list)
-    return postings_result[0][1] # Return just the list_of_postings
 
-def prefix_search(term: str, skip_list_path: Path = DEFAULT_OUTPUT_DIR / "postings_dictionary.skip", dictionary_file_path: Path = DEFAULT_OUTPUT_DIR / "postings_dictionary",
-                  postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings") -> Union[list[tuple[str, list[tuple[int, int, list[int]]]]], None]:
+    return postings_result
+
+def prefix_search(term_prefix: str,
+                  dictionary_items: List[Tuple[str, int]],
+                  postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings") -> Union[List[Tuple[str, List[Tuple[int, int, List[int]]]]], None]:
     """
-    Retrieves postings for all terms starting with the given prefix.
-    Uses a skip list to find an entry point into the dictionary file.
+    Retrieves postings for all terms starting with the given prefix using a sorted dictionary.
+    This function already primarily uses dictionary_items.
 
     Args:
-        term (str): The prefix to search for.
-        skip_list (dict[str, int]): Loaded skip list (term -> offset in dictionary_file).
-        dictionary_file_path (Path): Path to the dictionary file.
+        term_prefix (str): The prefix to search for.
+        dictionary_items (List[Tuple[str, int]]): Dictionary items (term, offset_in_postings_file), 
+                                                         sorted lexicographically by term.
         postings_file_path (Path): Path to the postings file.
 
     Returns:
-        Union[list[tuple[str, list[tuple[int, int, list[int]]]]], None]:
+        Union[List[Tuple[str, List[Tuple[int, int, List[int]]]]], None]:
             A list of (matching_term, list_of_postings) tuples.
-            Each posting is (doc_id, term_frequency, positions).
             Returns an empty list ([]) if no terms match the prefix.
             Returns None if a major error occurs.
     """
-    logging.debug(f"Getting document IDs for prefix '{term}*' using prefix search")
+    logging.debug(f"Getting document IDs for prefix '{term_prefix}*'")
+    term_prefix = term_prefix.lower()
 
-    if not postings_file_path.is_file() or not dictionary_file_path.is_file() or not skip_list_path.is_file():
-        logging.error(f"Unable to perform search: (Some) index files do not exist!")
-        return None
-
-    try:
-        skip_list = load_dictionary(skip_list_path)
-    except Exception as e:
-        logging.error(f"Error loading skip list from '{skip_list_path}': {e}")
-        return None
-
-    # Find starting point in the dictionary
-    term_start_offset = -1
-    term = term.lower()
-    if term not in skip_list:
-        for t, offset in skip_list.items():
-            if t < term:
-                term_start_offset = offset
-            else:
-                break
-    else:
-        term_start_offset = skip_list[term]
-
-    if term_start_offset == -1:
+    if not dictionary_items:
+        logging.warning("Dictionary items list is empty.")
         return []
 
+    candidate_terms_names: List[str] = []
+    candidate_offsets: List[Tuple[int, int]] = []
 
-    candidate_terms: dict[str, tuple[int, int]] = {} # term -> (start_offset, end_offset)
-    last_match: tuple[str, int] | None = None
+    start_idx = bisect.bisect_left(dictionary_items, term_prefix, key=lambda item: item[0])
 
-    # Read the dictionary file and find all terms starting with the given prefix
-    logging.debug(f"Searching for terms starting with '{term}' starting from offset {term_start_offset}")
-    try:
-        with open(dictionary_file_path, 'rb') as f:
-            if term_start_offset > 0:
-                f.seek(term_start_offset)
+    for i in range(start_idx, len(dictionary_items)):
+        current_term_str, current_start_offset = dictionary_items[i]
 
-            while True:
-                line_bytes = f.readline()
-                if not line_bytes: # EOF
-                    if last_match:
-                        candidate_terms[last_match[0]] = (last_match[1], -1)
-                    break
+        if current_term_str.startswith(term_prefix):
+            end_offset = -1 # Default to EOF for the last term matching
+            if i + 1 < len(dictionary_items):
+                # The end_offset is the start_offset of the next term
+                _, next_term_offset = dictionary_items[i+1]
+                end_offset = next_term_offset
 
-                line_str = line_bytes.decode('utf-8').strip()
+            candidate_terms_names.append(current_term_str)
+            candidate_offsets.append((current_start_offset, end_offset))
+        elif candidate_terms_names:
+            break
+        elif not candidate_terms_names and current_term_str > term_prefix:
+            # If no matches found yet and we've passed where the prefix would be alphabetically, stop.
+            break
 
-                try:
-                    current_term, current_offset_str = line_str.split('\t', 1)
-                    current_start_offset = int(current_offset_str)
 
-                    if last_match:
-                        previous_term, previous_start_offset = last_match
-                        candidate_terms[previous_term] = (previous_start_offset, current_start_offset)
-                        last_match = None
+    if not candidate_terms_names:
+        return []
 
-                    if current_term.startswith(term):
-                        logging.debug(f"Found matching term '{current_term}' at offset {current_start_offset}")
-                        last_match = (current_term, current_start_offset)
-                    elif current_term > term:
-                        break
-
-                except ValueError:
-                    logging.warning(f"Malformed line in dictionary: {line_str}. Skipping.")
-                    if last_match: # A match was pending, its end_offset is now uncertain.
-                        candidate_terms[last_match[0]] = (last_match[1], -1) # Treat as if it's the last known good one
-                        last_match = None
-                    continue
-                except Exception as e:
-                    logging.error(f"Error processing line '{line_str}': {e}")
-                    if last_match:
-                        candidate_terms[last_match[0]] = (last_match[1], -1)
-                        last_match = None
-                    continue
-
-    except Exception as e:
-        logging.error(f"Error reading dictionary file '{dictionary_file_path}': {e}")
-        return None
-
-    return get_postings(postings_file_path, list(candidate_terms.values()), list(candidate_terms.keys()))
+    return get_postings(postings_file_path, candidate_offsets, candidate_terms_names)
 
 def calculate_and_save_document_lengths(source_path: Path, content_file_name: str,
                                         output_dir: Path = DEFAULT_OUTPUT_DIR,

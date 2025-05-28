@@ -9,8 +9,8 @@ import struct
 import io
 from typing import Union
 
-WDIR = Path(__file__).resolve().parent
-DEFAULT_OUTPUT_DIR = WDIR / "output"
+WDIR = Path(__file__).resolve().parent.parent / "static"
+DEFAULT_OUTPUT_DIR = WDIR / "index"
 
 def parse_args() -> argparse.Namespace:
     """
@@ -735,7 +735,7 @@ def direct_search(term: str, dictionary: dict[str, int], postings_file_path: Pat
     # We expect one entry: (term, its_postings_list)
     return postings_result[0][1] # Return just the list_of_postings
 
-def prefix_search(term: str, skip_list: dict[str, int] = DEFAULT_OUTPUT_DIR / "postings_dictionary.skip", dictionary_file_path: Path = DEFAULT_OUTPUT_DIR / "postings_dictionary",
+def prefix_search(term: str, skip_list_path: Path = DEFAULT_OUTPUT_DIR / "postings_dictionary.skip", dictionary_file_path: Path = DEFAULT_OUTPUT_DIR / "postings_dictionary",
                   postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings") -> Union[list[tuple[str, list[tuple[int, int, list[int]]]]], None]:
     """
     Retrieves postings for all terms starting with the given prefix.
@@ -756,8 +756,14 @@ def prefix_search(term: str, skip_list: dict[str, int] = DEFAULT_OUTPUT_DIR / "p
     """
     logging.debug(f"Getting document IDs for prefix '{term}*' using prefix search")
 
-    if not postings_file_path.is_file():
-        logging.error(f"Postings file '{postings_file_path}' does not exist!")
+    if not postings_file_path.is_file() or not dictionary_file_path.is_file() or not skip_list_path.is_file():
+        logging.error(f"Unable to perform search: (Some) index files do not exist!")
+        return None
+
+    try:
+        skip_list = load_dictionary(skip_list_path)
+    except Exception as e:
+        logging.error(f"Error loading skip list from '{skip_list_path}': {e}")
         return None
 
     # Find starting point in the dictionary

@@ -274,3 +274,7 @@ pyrightconfig.json
 # Ignore all local history of files
 .history
 .ionide
+
+### Application Specific ###
+./static/index/*
+./static/index/.*

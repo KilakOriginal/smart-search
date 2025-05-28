@@ -10,4 +10,17 @@
 5. Search our corpus of documents!
 
 > [!WARNING]
-> As of right now the search engine is **not functional!**
+> As of right now the search engine is **not functional**! The search itself is implemented, but the unpacking/rendering of the results is not yet implementet.
+
+## Future Development
+- [ ] Implement unpacking/rendering of search results
+- [ ] Add document previews
+- [ ] Add pagination to search results
+- [ ] Render documents in a user-friendly way (clickable links, etc.)
+- [ ] Improve core search algorithm (specifically ranking of results)
+
+## Contributing
+If you want to contribute to this project, feel free to open an issue or a pull request. All contributions are welcome!
+
+## License
+This project is licensed under the GNU General Public License v3.0. See the [LICENSE](LICENSE) file for more details.

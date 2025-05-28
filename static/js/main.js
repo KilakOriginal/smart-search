@@ -21,10 +21,9 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       // Send a GET request to your Flask API endpoint
       const response = await fetch(`/search?q=${encodeURIComponent(query)}`);
-      const data = await response.json(); // Parse the JSON response
+      const results = await response.json(); // Parse the JSON response
 
-      // Assuming 'results' is an array of objects with 'url' and 'title' properties
-      displayResults(data.results);
+      displayResults(results);
     } catch (error) {
       console.error("Error fetching search results:", error);
       if (searchResultsDiv) {
@@ -44,14 +43,23 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    results.forEach((result) => {
-      const resultItem = document.createElement("div");
-      resultItem.classList.add("result-item");
-      resultItem.innerHTML = `
-                <h3><a href="${result.url}" target="_blank">${result.title}</a></h3>
-                <p>${result.url}</p>
-            `;
-      searchResultsDiv.appendChild(resultItem);
+    results.forEach(([term, postings]) => {
+      const termSection = document.createElement("div");
+      termSection.classList.add("term-section");
+
+      const termHeader = document.createElement("h3");
+      termHeader.textContent = `Term: ${term}`;
+      termSection.appendChild(termHeader);
+
+      const postingsList = document.createElement("ul");
+      postings.forEach(([docId, tf, positions]) => {
+        const item = document.createElement("li");
+        item.textContent = `Document ID: ${docId}, Frequency: ${tf}, Positions: [${positions.join(", ")}]`;
+        postingsList.appendChild(item);
+      });
+
+      termSection.appendChild(postingsList);
+      searchResultsDiv.appendChild(termSection);
     });
   }
 });

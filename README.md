@@ -5,15 +5,13 @@
 ## Usage
 1. Create a virtual environment (optional, but strongly recommended)
 2. Install the requirements using `pip install -r requirements.txt`
-3. Run `python app.py`
-4. Navigate to the server address in your webbrowser (`http://127.0.0.1:5000` by default)
-5. Search our corpus of documents!
-
-> [!WARNING]
-> As of right now the search engine is **not functional**! The search itself is implemented, but the unpacking/rendering of the results is not yet implementet.
+3. Add a postings file, dictionary and skip list file to `static/index/` or change the paths in `app.py` or `logic/search.py` to point to your own files.
+4. Run `python app.py`
+5. Navigate to the server address in your webbrowser (`http://127.0.0.1:5000` by default)
+6. Search the corpus of documents!
 
 ## Future Development
-- [ ] Implement unpacking/rendering of search results
+- [ ] More visually appealing rendering of search results
 - [ ] Add document previews
 - [ ] Add pagination to search results
 - [ ] Render documents in a user-friendly way (clickable links, etc.)

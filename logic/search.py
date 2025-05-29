@@ -9,6 +9,7 @@ import struct
 import io
 import bisect
 from typing import Union, List, Tuple, Dict
+from .utils import setup_logging
 
 WDIR = Path(__file__).resolve().parent.parent / "static"
 DEFAULT_OUTPUT_DIR = WDIR / "index"
@@ -76,6 +77,56 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
+def extract_documents(source_path: Path, content_file_name: str, destination_directory: Path = DEFAULT_OUTPUT_DIR / "documents", max_documents: int = 0, replace: bool = False) -> int:
+    """
+    Extracts documents from a compressed archive file.
+
+    Args:
+        source_path (Path): Path to the source archive (e.g., .tar.gz file).
+        content_file_name (str): Name of the content file inside the archive.
+        destination_directory (Path): Directory to save extracted documents.
+        max_documents (int): Maximum number of documents to extract (0 for no limit).
+
+    Returns:
+        int: 0 on success, 1 on failure.
+    """
+    logging.debug(f"Extracting documents from '{source_path}/{content_file_name}' to '{destination_directory}' with max_documents={max_documents}")
+
+    if not source_path.is_file():
+        logging.error(f"No such file '{source_path}'!")
+        return 1
+
+    destination_directory.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with tarfile.open(source_path, mode='r:*') as archive:
+            member = archive.getmember(content_file_name)
+
+            with archive.extractfile(member) as file:
+                for line_idx, line in enumerate(file):
+                    if max_documents > 0 and line_idx >= max_documents:
+                        break
+                    try:
+                        (document_id, document) = line.decode().strip().split("\t", 1)
+                        document_id = document_id.strip()
+                        document = document.strip()
+
+                        output_file_path = destination_directory / f"{document_id}.txt"
+
+                        if output_file_path.is_file() and not replace:
+                            logging.warning(f"File '{output_file_path}' already exists but the overwrite flag is set to False.")
+                            continue
+
+                        with open(output_file_path, "w", encoding="utf-8") as output_file:
+                            output_file.write(document)
+                    except Exception as e:
+                        logging.error(f"Error processing line {line_idx} ('{line.decode().strip()[:50]}...'): {e}")
+                        continue
+    except Exception as e:
+        logging.error(f"Error opening archive '{source_path}': {e}")
+        return 1
+
+    return 0
 
 def get_normalised_word_frequency(source_path: Path, content_file_name: str, max_documents: int = 0) -> Union[tuple[dict[str, tuple[float, int]], int], None]:
     """
@@ -869,3 +920,17 @@ def calculate_and_save_document_lengths(source_path: Path, content_file_name: st
     except Exception as e:
         logging.error(f"Unexpected error saving document lengths to '{output_file_path}': {e}")
         return 1
+
+
+def main() -> int:
+    args = parse_args()
+    setup_logging(args)
+
+    #extract_documents(Path("/home/malik/Nextcloud/University/Semester 6/Information Retrieval/Aufgaben/collectionandqueries.tar.gz"),
+    #                  "collection.tsv",
+    #                  Path("/home/malik/Nextcloud/University/Semester 6/Information Retrieval/Aufgaben/output/documents"))
+    
+    return 0
+
+if __name__ == "__main__":
+    main()

@@ -276,5 +276,5 @@ pyrightconfig.json
 .ionide
 
 ### Application Specific ###
-./static/index/*
-./static/index/.*
+static/index
+static/documents

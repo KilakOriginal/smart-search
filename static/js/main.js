@@ -3,26 +3,26 @@ document.addEventListener("DOMContentLoaded", () => {
   const searchInput = document.getElementById("searchInput");
   const searchResultsDiv = document.getElementById("searchResults");
 
-  searchForm?.addEventListener("submit", async (event) => {
-    event.preventDefault(); // Prevent the default form submission (page reload)
-
-    const query = searchInput?.value.trim();
-    if (!query) {
-      if (searchResultsDiv) {
-        searchResultsDiv.innerHTML = "<p>Please enter a search query.</p>";
-      }
+  // Function to perform search and update URL
+  async function performSearch(query) {
+    if (!query.trim()) {
+      if (searchResultsDiv) searchResultsDiv.innerHTML = "<p>Please enter a search term.</p>";
       return;
     }
 
-    if (searchResultsDiv) {
-      searchResultsDiv.innerHTML = "<p>Searching...</p>";
-    }
+    // Update URL with the query
+    const url = new URL(window.location);
+    url.searchParams.set('q', query);
+    window.history.pushState({ path: url.href }, '', url.href); // Update URL without full reload
+
+    if (searchResultsDiv) searchResultsDiv.innerHTML = "<p>Searching...</p>";
 
     try {
-      // Send a GET request to your Flask API endpoint
       const response = await fetch(`/search?q=${encodeURIComponent(query)}`);
-      const results = await response.json(); // Parse the JSON response
-
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const results = await response.json();
       displayResults(results, query);
     } catch (error) {
       console.error("Error fetching search results:", error);
@@ -31,19 +31,34 @@ document.addEventListener("DOMContentLoaded", () => {
           "<p>Error fetching search results. Please try again.</p>";
       }
     }
+  }
+
+  // Handle form submission
+  searchForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const query = searchInput?.value || "";
+    performSearch(query);
   });
+
+  // Populate search bar and perform search if 'q' is in URL on load
+  const initialUrlParams = new URLSearchParams(window.location.search);
+  const initialQuery = initialUrlParams.get('q');
+  if (initialQuery && searchInput) {
+    searchInput.value = initialQuery;
+    performSearch(initialQuery); // Automatically search if query in URL
+  }
+
 
   let currentPage = 1;
   const resultsPerPage = 10;
   let allPostings = [];
-  let currentQuery = "";
+  // currentQuery is no longer needed globally here as we get it from searchInput or URL
 
-  function displayResults(results, query) {
+  function displayResults(results, query) { // query is passed for the overview message
     if (!searchResultsDiv) return;
 
     searchResultsDiv.innerHTML = ""; // Clear previous results
     currentPage = 1; // Reset to first page for new search
-    currentQuery = query;
 
     const searchTime = results[0];
     const queryResults = results[1];
@@ -61,7 +76,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const searchOverview = document.createElement("div");
-    searchOverview.innerHTML = `${allPostings.length} search results found for <em>${query}</em> in ${searchTime.toFixed(2)} ms`;
+    const roundedSearchTime = typeof searchTime === 'number' ? searchTime.toFixed(2) : parseFloat(searchTime).toFixed(2);
+    searchOverview.innerHTML = `${allPostings.length} search results found for <em>${query}</em> in ${roundedSearchTime} ms`;
     searchResultsDiv.appendChild(searchOverview);
 
     renderPage();
@@ -71,7 +87,6 @@ document.addEventListener("DOMContentLoaded", () => {
   function renderPage() {
     if (!searchResultsDiv) return;
 
-    // Clear only the results, not the overview and pagination controls
     const existingResultsContainer = searchResultsDiv.querySelector("#results-container");
     if (existingResultsContainer) {
       existingResultsContainer.innerHTML = "";
@@ -83,21 +98,26 @@ document.addEventListener("DOMContentLoaded", () => {
     
     const resultsContainer = searchResultsDiv.querySelector("#results-container") || searchResultsDiv;
 
-
     const startIndex = (currentPage - 1) * resultsPerPage;
     const endIndex = startIndex + resultsPerPage;
     const paginatedPostings = allPostings.slice(startIndex, endIndex);
 
-    paginatedPostings.forEach(([docId, tf, positions]) => {
+    // resultsContainer.innerHTML = "<p>Loading page content...</p>"; 
+
+    const previewPromises = paginatedPostings.map(async ([docId, tf, positions]) => {
       const docElement = document.createElement("div");
       docElement.classList.add("document-result");
 
       const titleElement = document.createElement("h3");
-      titleElement.textContent = `Document ${docId}`;
+      const titleLink = document.createElement("a");
+      titleLink.textContent = `Document ${docId}`;
+      titleLink.href = `/document/${docId}`;
+      // titleLink.target = "_blank";
+      titleElement.appendChild(titleLink);
       docElement.appendChild(titleElement);
 
       const previewElement = document.createElement("p");
-      previewElement.textContent = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.";
+      previewElement.textContent = "Loading preview...";
       docElement.appendChild(previewElement);
       
       // const detailsElement = document.createElement("p");
@@ -105,7 +125,32 @@ document.addEventListener("DOMContentLoaded", () => {
       // detailsElement.textContent = `TF: ${tf}, Positions: [${positions.join(", ")}]`;
       // docElement.appendChild(detailsElement);
 
-      resultsContainer.appendChild(docElement);
+      try {
+        // Fetch preview with default length
+        const response = await fetch(`/get_preview/${docId}`);
+        if (response.ok) {
+          const data = await response.json();
+          previewElement.textContent = data.preview || "Preview not available.";
+        } else {
+          console.error(`Error fetching preview for doc ${docId}: ${response.status}`);
+          previewElement.textContent = "Preview could not be loaded.";
+        }
+      } catch (error) {
+        console.error(`Network error fetching preview for doc ${docId}:`, error);
+        previewElement.textContent = "Preview load failed (network error).";
+      }
+      return docElement;
+    });
+
+    // Once all promises are resolved or rejected
+    Promise.all(previewPromises).then(docElements => {
+      // resultsContainer.innerHTML = "";
+      docElements.forEach(docEl => {
+        resultsContainer.appendChild(docEl);
+      });
+    }).catch(error => {
+        console.error("Error rendering page with previews:", error);
+        resultsContainer.innerHTML = "<p>Error displaying page results.</p>";
     });
   }
 

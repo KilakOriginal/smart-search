@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, abort, render_template, request, jsonify
 from logic.search import prefix_search, direct_search, load_dictionary, DEFAULT_OUTPUT_DIR
 from logic.utils import setup_logging, time_it
 import logging
@@ -6,12 +6,16 @@ import argparse
 from typing import Dict, List, Tuple, Union
 from pathlib import Path
 
+DOCUMENTS_DIR = DEFAULT_OUTPUT_DIR.parent / "documents"
+
 DICTIONARY_ITEMS: Union[List[Tuple[str, int]], None] = None
 #SKIP_LIST: Union[Dict[str, int], None] = None
 
 POSTINGS_FILE_PATH = DEFAULT_OUTPUT_DIR / "postings"
 DICTIONARY_FILE_PATH = DEFAULT_OUTPUT_DIR / "postings_dictionary"
 #SKIP_LIST_FILE_PATH = DICTIONARY_FILE_PATH.with_suffix('.skip')
+
+PREVIEW_MAX_LENGTH = 150
 
 def load_index_data():
     global DICTIONARY_ITEMS #, SKIP_LIST
@@ -68,6 +72,52 @@ setup_logging(args)
 # Initialise Flask application
 app = Flask(__name__)
 load_index_data()
+
+@app.route('/get_preview/<int:doc_id>')
+def get_preview(doc_id):
+    try:
+        length_str = request.args.get('length')
+        length = PREVIEW_MAX_LENGTH
+        if length_str and length_str.isdigit():
+            length = min(int(length_str), length)
+
+        file_path = DOCUMENTS_DIR / f"{doc_id}.txt"
+
+        if not file_path.is_relative_to(DOCUMENTS_DIR):
+            logging.warning(f"Attempt to access file outside designated directory: {file_path}")
+            abort(403)  # Forbidden
+
+        if file_path.is_file():
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read(length)
+                if len(content) == length and f.read(1):
+                    content += "..." # Indicate truncation
+                return jsonify({"preview": content, "doc_id": doc_id})
+        else:
+            logging.warning(f"Preview requested for non-existent document: {doc_id}.txt at {file_path}")
+            return jsonify({"preview": "No content found."}), 404 # Not found
+    except Exception as e:
+        logging.error(f"Error fetching preview for doc_id {doc_id}: {e}")
+        return jsonify({"preview": "Error loading preview."}), 500 # Internal server error
+
+@app.route('/document/<int:doc_id>')
+def get_document_page(doc_id):
+    try:
+        file_path = DOCUMENTS_DIR / f"{doc_id}.txt"
+        if not file_path.is_relative_to(DOCUMENTS_DIR):
+            logging.warning(f"Attempt to access file outside designated directory: {file_path}")
+            abort(403)
+
+        if file_path.is_file():
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            return render_template('document.html', doc_id=doc_id, content=content)
+        else:
+            logging.warning(f"Full document requested for non-existent document: {doc_id}.txt at {file_path}")
+            abort(404) # Page not found
+    except Exception as e:
+        logging.error(f"Error serving document page for doc_id {doc_id}: {e}")
+        abort(500) # Internal server error
 
 @app.route('/')
 def index():

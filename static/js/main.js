@@ -61,7 +61,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const searchOverview = document.createElement("div");
-    searchOverview.innerHTML = `${allPostings.length} search results found for <em>${query}</em> in ${searchTime.toFixed(2)} ms`;
+    searchOverview.innerHTML = `${allPostings.length} search results found for <b><em>${query}</em></b> in ${searchTime.toFixed(2)} ms`;
     searchResultsDiv.appendChild(searchOverview);
 
     renderPage();

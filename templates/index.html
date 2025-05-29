@@ -8,15 +8,50 @@
 </head>
 <body>
     <div class="container">
-        <h1>Smart Search</h1>
+<div class="logo-container" style="display: flex; align-items: center;flex-direction: row; gap: 32px;">
+    <!-- Neural Circles SVG (icon) -->
+    <svg width="120" height="120" viewBox="140 40 160 120" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <linearGradient id="neuroGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#00C9FF"/>
+                <stop offset="100%" stop-color="#92FE9D"/>
+            </linearGradient>
+        </defs>
+        <!-- Four Neural Circles rotated 45 degrees to the right around the hub at (220,100) with radius 60 -->
+        <circle cx="262.43" cy="142.43" r="12" fill="#00C9FF" class="pulse"/>
+        <circle cx="177.57" cy="142.43" r="12" fill="#00C9FF" class="pulse"/>
+        <circle cx="177.57" cy="57.57" r="12" fill="#00C9FF" class="pulse"/>
+        <circle cx="262.43" cy="57.57" r="12" fill="#00C9FF" class="pulse"/>
+        <!-- Central Hub Circle -->
+        <circle cx="220" cy="100" r="24" fill="url(#neuroGrad)" />
+        <!-- Connection Lines (small → hub) -->
+        <line x1="262.43" y1="142.43" x2="220" y2="100" stroke="#00C9FF" stroke-width="3"/>
+        <line x1="177.57" y1="142.43" x2="220" y2="100" stroke="#00C9FF" stroke-width="3"/>
+        <line x1="177.57" y1="57.57" x2="220" y2="100" stroke="#00C9FF" stroke-width="3"/>
+        <line x1="262.43" y1="57.57" x2="220" y2="100" stroke="#00C9FF" stroke-width="3"/>
+    </svg>
+    <!-- Logo Text -->
+    <span style="font-family: Rajdhani, sans-serif; font-size: 4rem; font-weight: bold; background: linear-gradient(90deg, #00C9FF, #92FE9D); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;        font-family: 'Poppins', 'Segoe UI', sans-serif;
+        font-weight: 600;
+        dominant-baseline: middle;">
+        Smart Search
+    </span>
+</div>
+
+
+
+
         <form id="searchForm">
             <input type="text" id="searchInput" placeholder="Query" required>
-            <button type="submit">Search</button>
+            <button type="submit" style="background: none; border: none; padding: 2px;margin-right: 2px; cursor: pointer;">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="28" height="28" fill="#00C9FF" aria-label="Search">
+                    <path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352a144 144 0 1 0 0-288 144 144 0 1 0 0 288z"/>
+                </svg>
+            </button>
         </form>
         <div id="searchResults">
             </div>
     </div>
-
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>

@@ -153,7 +153,7 @@ def get_normalised_word_frequency(source_path: Path, content_file_name: str, max
       return None
 
     word_frequency: dict[str, tuple[float, int]] = {}
-    processed_doc_count = 0
+    processed_document_count = 0
 
     try:
         with tarfile.open(source_path, mode='r:*') as archive:
@@ -161,7 +161,7 @@ def get_normalised_word_frequency(source_path: Path, content_file_name: str, max
 
             with archive.extractfile(member) as file:
                 for line_idx, line in enumerate(file):
-                    if max_documents > 0 and processed_doc_count >= max_documents:
+                    if max_documents > 0 and processed_document_count >= max_documents:
                         break
                     try:
                         (_, document) = line.decode().strip().split("\t", 1)
@@ -181,12 +181,12 @@ def get_normalised_word_frequency(source_path: Path, content_file_name: str, max
                     except Exception as e:
                         logging.error(f"Error processing line {line_idx} ('{line.decode().strip()[:50]}...'): {e}")
                         continue
-                    processed_doc_count += 1
+                    processed_document_count += 1
     except Exception as e:
         logging.error(f"Error opening archive '{source_path}': {e}")
         return None
 
-    return (word_frequency, processed_doc_count)
+    return (word_frequency, processed_document_count)
 
 def build_stop_word_list(normalised_word_frequency: dict[str, tuple[float, int]], document_count: int) -> list[str]:
     """
@@ -303,7 +303,7 @@ def build_postings_and_dictionary(source_path: Path, content_file_name: str, sto
     temp_dir.mkdir(exist_ok=True)
 
     block_count = 0
-    current_block_inverted_index = {} # {term: {doc_id: [pos1, pos2, ...]}}
+    current_block_inverted_index = {} # {term: {document_id: [pos1, pos2, ...]}}
     current_block_memory_usage = 0 # in bytes
 
     try:
@@ -384,12 +384,12 @@ def spill_block_to_disk(block_inverted_index: dict[str, dict[str, tuple[int, lis
     """
     Sorts the terms in the current in-memory block and writes them to a temporary file.
     Each line in the temporary file has the format:
-    term<tab>doc_id1:tf1:pos11,pos12,...;doc_id2:tf2:pos21,pos22,...
+    term<tab>document_id1:tf1:pos11,pos12,...;document_id2:tf2:pos21,pos22,...
 
     Args:
         block_inverted_index (dict[str, dict[str, tuple[int, list[int]]]]): 
             The in-memory inverted index block. Structure: 
-            {term: {doc_id_str: (term_frequency, [positions_list])}}.
+            {term: {document_id_str: (term_frequency, [positions_list])}}.
         temp_dir (Path): Directory to store temporary block files.
         block_id (int): Identifier for the current block.
     """
@@ -399,11 +399,11 @@ def spill_block_to_disk(block_inverted_index: dict[str, dict[str, tuple[int, lis
     with open(temp_file_path, 'w', encoding='utf-8') as f:
         for term in sorted_terms:
             postings_list_str_parts = []
-            sorted_doc_ids = sorted(block_inverted_index[term].keys(), key=lambda x: int(x) if x.isdigit() else x)
+            sorted_document_ids = sorted(block_inverted_index[term].keys(), key=lambda x: int(x) if x.isdigit() else x)
 
-            for doc_id in sorted_doc_ids:
-                term_freq, positions = block_inverted_index[term][doc_id]
-                postings_list_str_parts.append(f"{doc_id}:{term_freq}:{','.join(map(str, positions))}")
+            for document_id in sorted_document_ids:
+                term_freq, positions = block_inverted_index[term][document_id]
+                postings_list_str_parts.append(f"{document_id}:{term_freq}:{','.join(map(str, positions))}")
 
             f.write(f"{term}\t{';'.join(postings_list_str_parts)}\n")
 
@@ -483,7 +483,7 @@ def merge_blocks_and_build_dictionary(temp_dir: Path, final_postings_path: Path,
                         logging.error(f"Error reading line from block {next_file_idx}: {e}")
                         continue
 
-            merged_postings_map = {} # {doc_id: (term_freq, [positions])}
+            merged_postings_map = {} # {document_id: (term_freq, [positions])}
 
             for line, _ in lines_for_current_term:
                 try:
@@ -655,7 +655,7 @@ def get_postings(posting_file_path: Path, offsets: List[Tuple[int, int]], terms:
     Returns:
         Union[list[tuple[str, list[tuple[int, int, list[int]]]]], None]: 
             A list of tuples, where each tuple is (term, list_of_postings).
-            Each posting in list_of_postings is (doc_id (int), tf (int), positions (list[int])).
+            Each posting in list_of_postings is (document_id (int), tf (int), positions (list[int])).
             Returns None if a major error occurs (e.g., file not found, struct error).
             Returns an empty list if no terms are provided or if terms are valid but have no postings (should not happen with valid offsets).
     """
@@ -693,11 +693,11 @@ def get_postings(posting_file_path: Path, offsets: List[Tuple[int, int]], terms:
                             break
 
                         # Unpack document_id (4 bytes), term_frequency (2 bytes)
-                        doc_id, term_frequency = struct.unpack('>IH', posting_header) # Renamed positions_count to term_frequency for clarity
+                        document_id, term_frequency = struct.unpack('>IH', posting_header) # Renamed positions_count to term_frequency for clarity
 
                         positions_data = f.read(term_frequency * 4) # tf is used as positions_count here
                         if len(positions_data) < term_frequency * 4:
-                            logging.warning(f"Incomplete positions data for doc_id {doc_id} under term '{term}'. Expected {term_frequency * 4}, got {len(positions_data)}.")
+                            logging.warning(f"Incomplete positions data for document_id {document_id} under term '{term}'. Expected {term_frequency * 4}, got {len(positions_data)}.")
                             break
 
                         positions = []
@@ -706,7 +706,7 @@ def get_postings(posting_file_path: Path, offsets: List[Tuple[int, int]], terms:
                             position = struct.unpack('>I', positions_data[position_offset_in_data : position_offset_in_data + 4])[0]
                             positions.append(position)
 
-                        postings.append((doc_id, term_frequency, positions))
+                        postings.append((document_id, term_frequency, positions))
 
                     result.append((term, postings.copy()))
                 except struct.error as e:
@@ -735,7 +735,7 @@ def direct_search(term: str,
 
     Returns:
         Union[List[Tuple[int, int, List[int]]], None]:
-            A list of postings for the term. Each posting is (doc_id, term_frequency, positions).
+            A list of postings for the term. Each posting is (document_id, term_frequency, positions).
             Returns an empty list ([]) if the term is not found.
             Returns None if an error occurs during postings retrieval.
     """
@@ -831,6 +831,127 @@ def prefix_search(term_prefix: str,
 
     return get_postings(postings_file_path, candidate_offsets, candidate_terms_names)
 
+def phrase_search(phrase: str, 
+                  dictionary_items: List[Tuple[str, int]],
+                  postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings",
+                  stop_words: List[str] = ["the", "is", "a", "an", "and", "or", "of"]) -> Union[List[Tuple[str, List[Tuple[int, int, List[int]]]]], None]: # TODO: Use a more comprehensive stop word list
+    """
+    Searches for a phrase in the postings file using the dictionary.
+    The phrase is expected to be a sequence of words separated by spaces.
+
+    Args:
+        phrase (str): The phrase to search for.
+        dictionary_items (List[Tuple[str, int]]): Dictionary items (term, offset_in_postings_file), 
+                                                         sorted lexicographically by term.
+        postings_file_path (Path): Path to the postings file.
+
+    Returns:
+        Union[List[Tuple[str, List[Tuple[int, int, List[int]]]]], None]:
+            A list containing a single tuple: (phrase_string, list_of_matches).
+            Each match in list_of_matches is (document_id, phrase_frequency_in_doc, [start_positions_of_phrase]).
+            Returns an empty list ([]) if the phrase is not found.
+            Returns None if a major error occurs.
+    """
+    logging.debug(f"Searching for phrase '{phrase}'")
+    
+    terms = [word.lower() for word in phrase.strip().split() if word.lower() not in stop_words]
+    if not terms:
+        logging.warning("Empty phrase provided.")
+        return []
+
+    if len(terms) == 1:
+        return direct_search(terms[0], dictionary_items, postings_file_path)
+
+    # Fetch postings for all terms and collect their info for sorting
+    term_data_for_sorting: List[Dict[str, any]] = [] # {"term": str, "document_map": Dict[int, List[int]], "document_count": int}
+    terms_postings_map: Dict[str, Dict[int, List[int]]] = {} # {term_str: {document_id: [positions]}}
+
+    for term in terms:
+        term_postings_result = direct_search(term, dictionary_items, postings_file_path)
+
+        if term_postings_result is None:
+            logging.error(f"Error retrieving postings for term '{term}' in phrase '{phrase}'. Aborting phrase search.")
+            return None
+        if not term_postings_result:
+            logging.debug(f"Term '{term}' in phrase '{phrase}' not found in index. Phrase cannot exist.")
+            return []
+
+        term_postings_list: List[Tuple[int, int, List[int]]] = term_postings_result[0][1]  # [(term_name, [(document_id, tf, [positions])])]
+        
+        term_document_positions: Dict[int, List[int]] = {}
+        for document_id, _, positions in term_postings_list:
+            term_document_positions[document_id] = positions
+        
+        terms_postings_map[term] = term_document_positions
+        term_data_for_sorting.append({
+            "term": term,
+            "document_map": term_document_positions,
+            "document_count": len(term_document_positions)
+        })
+
+    # Sort terms by rarity
+    term_data_for_sorting.sort(key=lambda x: x["document_count"])
+
+    # Intersect document IDs, starting with the rarest term
+    if not term_data_for_sorting:
+        return []
+    
+    candidate_document_ids = set(term_data_for_sorting[0]["document_map"].keys())
+
+    for i in range(1, len(term_data_for_sorting)):
+        candidate_document_ids.intersection_update(term_data_for_sorting[i]["document_map"].keys())
+        if not candidate_document_ids:
+            logging.debug(f"No common documents found for all terms in phrase '{phrase}' after intersection.")
+            return []
+    
+    # Perform positional checks on candidate_document_ids
+    final_phrase_matches: List[Tuple[int, int, List[int]]] = [] # (document_id, phrase_freq, [start_positions])
+
+    for document_id in sorted(list(candidate_document_ids)):
+        document_term_positions_ordered: List[List[int]] = []
+        valid_doc_for_positional_check = True
+        for term in terms:
+            positions = terms_postings_map[term].get(document_id)
+            if positions is None: 
+                # This should not happen
+                logging.error(f"Internal error: Term '{term}' positions not found for document_id {document_id} which was in candidate_document_ids.")
+                valid_doc_for_positional_check = False
+                break
+            document_term_positions_ordered.append(positions)
+        
+        if not valid_doc_for_positional_check:
+            continue
+
+        # Positional adjacency check
+        phrase_starts_document: List[int] = []
+        if not document_term_positions_ordered or not document_term_positions_ordered[0]:
+            continue
+
+        for start_position in document_term_positions_ordered[0]:
+            is_match = True
+            current_position_phrase = start_position
+            for k in range(1, len(terms)):
+                expected_next_position = current_position_phrase + 1
+                
+                kth_term_positions = document_term_positions_ordered[k]
+                idx = bisect.bisect_left(kth_term_positions, expected_next_position)
+                
+                if idx == len(kth_term_positions) or kth_term_positions[idx] != expected_next_position:
+                    is_match = False
+                    break 
+                current_position_phrase = expected_next_position
+            
+            if is_match:
+                phrase_starts_document.append(start_position)
+        
+        if phrase_starts_document:
+            final_phrase_matches.append((document_id, len(phrase_starts_document), sorted(phrase_starts_document)))
+
+    if not final_phrase_matches:
+        return []
+    
+    return [(phrase, final_phrase_matches)]
+
 def calculate_and_save_document_lengths(source_path: Path, content_file_name: str,
                                         output_dir: Path = DEFAULT_OUTPUT_DIR,
                                         output_file_name: str = "document_lengths",
@@ -864,7 +985,7 @@ def calculate_and_save_document_lengths(source_path: Path, content_file_name: st
         logging.warning(f"File '{output_file_path}' already exists but the overwrite flag is set to False.")
         return 1
 
-    doc_id_length_pairs: list[tuple[int, int]] = []
+    document_id_length_pairs: list[tuple[int, int]] = []
 
     try:
         with tarfile.open(source_path, mode='r:*') as archive:
@@ -874,19 +995,19 @@ def calculate_and_save_document_lengths(source_path: Path, content_file_name: st
                 for line_idx, line_bytes in enumerate(file):
                     try:
                         line_str = line_bytes.decode().strip()
-                        doc_id_str, document_content = line_str.split("\t", 1)
+                        document_id_str, document_content = line_str.split("\t", 1)
                         
                         try:
-                            doc_id_int = int(doc_id_str)
+                            document_id_int = int(document_id_str)
                         except ValueError:
-                            logging.error(f"Could not convert document ID '{doc_id_str}' to integer on line {line_idx}. Skipping.")
+                            logging.error(f"Could not convert document ID '{document_id_str}' to integer on line {line_idx}. Skipping.")
                             continue
 
                         doc_length = len(document_content.split())
-                        doc_id_length_pairs.append((doc_id_int, doc_length))
+                        document_id_length_pairs.append((document_id_int, doc_length))
 
                     except ValueError:
-                        logging.error(f"Malformed line {line_idx} (expected 'doc_id\\tdocument'): '{line_str[:100]}...'. Skipping.")
+                        logging.error(f"Malformed line {line_idx} (expected 'document_id\\tdocument'): '{line_str[:100]}...'. Skipping.")
                         continue
                     except Exception as e:
                         logging.error(f"Error processing line {line_idx} ('{line_str[:100]}...'): {e}")
@@ -901,13 +1022,13 @@ def calculate_and_save_document_lengths(source_path: Path, content_file_name: st
         logging.error(f"Error reading from archive '{source_path}': {e}")
         return 1
 
-    logging.debug(f"Collected {len(doc_id_length_pairs)} document ID-length pairs.")
+    logging.debug(f"Collected {len(document_id_length_pairs)} document ID-length pairs.")
 
     # Save the document ID and lengths to a binary file
     try:
         with open(output_file_path, "wb") as f:
-            for doc_id, length in doc_id_length_pairs:
-                f.write(struct.pack('>I', doc_id))
+            for document_id, length in document_id_length_pairs:
+                f.write(struct.pack('>I', document_id))
                 f.write(struct.pack('>I', length))
         logging.info(f"Document lengths saved to binary file '{output_file_path}'")
         return 0

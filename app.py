@@ -1,5 +1,5 @@
 from flask import Flask, abort, render_template, request, jsonify
-from logic.search import prefix_search, direct_search, load_dictionary, DEFAULT_OUTPUT_DIR
+from logic.search import prefix_search, direct_search, phrase_search, load_dictionary, DEFAULT_OUTPUT_DIR
 from logic.utils import setup_logging, time_it
 import logging
 import argparse
@@ -128,9 +128,11 @@ def search():
     logging.debug("Search endpoint called with query: %s", request.args.get('q', ''))
     query = request.args.get('q', '')
     if query.endswith('*'):
-        results = time_it(prefix_search, query[:-1], DICTIONARY_ITEMS)
+        results = time_it(prefix_search, query[:-1], DICTIONARY_ITEMS, POSTINGS_FILE_PATH)
+    elif ' ' in query:
+        results = time_it(phrase_search, query, DICTIONARY_ITEMS, POSTINGS_FILE_PATH)
     else:
-        results = time_it(direct_search, query, DICTIONARY_ITEMS)
+        results = time_it(direct_search, query, DICTIONARY_ITEMS, POSTINGS_FILE_PATH)
     return jsonify(results)
 
 

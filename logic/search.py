@@ -10,9 +10,12 @@ import io
 import bisect
 from typing import Union, List, Tuple, Dict
 from .utils import setup_logging
+import math
 
 WDIR = Path(__file__).resolve().parent.parent / "static"
 DEFAULT_OUTPUT_DIR = WDIR / "index"
+
+STOPWORDS = ["the", "is", "a", "an", "and", "or", "of"]
 
 def parse_args() -> argparse.Namespace:
     """
@@ -130,7 +133,7 @@ def extract_documents(source_path: Path, content_file_name: str, destination_dir
 
 def get_normalised_word_frequency(source_path: Path, content_file_name: str, max_documents: int = 0) -> Union[tuple[dict[str, tuple[float, int]], int], None]:
     """
-    Calculates normalised term frequencies (sum of tf/doc_length) and document frequencies 
+    Calculates normalised term frequencies (sum of tf/document_length) and document frequencies 
     for words in a collection.
 
     Args:
@@ -167,8 +170,8 @@ def get_normalised_word_frequency(source_path: Path, content_file_name: str, max
                         (_, document) = line.decode().strip().split("\t", 1)
                         word_document_frequency: dict[str, int] = {} # Term frequency within the current document
                         split_document = document.split()
-                        doc_length = len(split_document)
-                        if doc_length == 0:
+                        document_length = len(split_document)
+                        if document_length == 0:
                             continue
 
                         for word in split_document:
@@ -177,7 +180,7 @@ def get_normalised_word_frequency(source_path: Path, content_file_name: str, max
 
                         for word, count in word_document_frequency.items():
                             current_sum_tf, current_df = word_frequency.get(word, (0.0, 0))
-                            word_frequency[word] = (current_sum_tf + count / doc_length, current_df + 1)
+                            word_frequency[word] = (current_sum_tf + count / document_length, current_df + 1)
                     except Exception as e:
                         logging.error(f"Error processing line {line_idx} ('{line.decode().strip()[:50]}...'): {e}")
                         continue
@@ -721,6 +724,96 @@ def get_postings(posting_file_path: Path, offsets: List[Tuple[int, int]], terms:
 
     return result
 
+def calculate_and_save_document_lengths(source_path: Path, content_file_name: str,
+                                        output_dir: Path = DEFAULT_OUTPUT_DIR,
+                                        output_file_name: str = "document_lengths",
+                                        replace: bool = False) -> int:
+    """
+    Calculates the number of words (length) for each document in the collection
+    and saves this information to a binary file. Each entry in the file consists of:
+    - Document ID (4-byte unsigned int, big-endian)
+    - Document Length (4-byte unsigned int, big-endian)
+
+    Args:
+        source_path (Path): Path to the source archive (e.g., .tar.gz file).
+        content_file_name (str): Name of the content file inside the archive.
+        output_dir (Path): Directory to save the output binary file.
+        output_file_name (str): Name for the output binary file.
+        replace (bool): Whether to overwrite the output file if it exists.
+
+    Returns:
+        int: 0 on success, 1 on failure.
+    """
+    logging.debug(f"Calculating document lengths from '{source_path}/{content_file_name}' for binary output.")
+
+    if not source_path.is_file():
+        logging.error(f"No such file '{source_path}'!")
+        return 1
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_file_path = output_dir / output_file_name
+
+    if output_file_path.is_file() and not replace:
+        logging.warning(f"File '{output_file_path}' already exists but the overwrite flag is set to False.")
+        return 1
+
+    document_id_length_pairs: list[tuple[int, int]] = []
+
+    try:
+        with tarfile.open(source_path, mode='r:*') as archive:
+            member = archive.getmember(content_file_name)
+
+            with archive.extractfile(member) as file:
+                for line_idx, line_bytes in enumerate(file):
+                    try:
+                        line_str = line_bytes.decode().strip()
+                        document_id_str, document_content = line_str.split("\t", 1)
+                        
+                        try:
+                            document_id_int = int(document_id_str)
+                        except ValueError:
+                            logging.error(f"Could not convert document ID '{document_id_str}' to integer on line {line_idx}. Skipping.")
+                            continue
+
+                        document_length = len(document_content.split())
+                        document_id_length_pairs.append((document_id_int, document_length))
+
+                    except ValueError:
+                        logging.error(f"Malformed line {line_idx} (expected 'document_id\\tdocument'): '{line_str[:100]}...'. Skipping.")
+                        continue
+                    except Exception as e:
+                        logging.error(f"Error processing line {line_idx} ('{line_str[:100]}...'): {e}")
+                        continue
+    except tarfile.TarError as e:
+        logging.error(f"TarError opening or reading archive '{source_path}': {e}")
+        return 1
+    except KeyError:
+        logging.error(f"Content file '{content_file_name}' not found in archive '{source_path}'.")
+        return 1
+    except Exception as e:
+        logging.error(f"Error reading from archive '{source_path}': {e}")
+        return 1
+
+    logging.debug(f"Collected {len(document_id_length_pairs)} document ID-length pairs.")
+
+    # Save the document ID and lengths to a binary file
+    try:
+        with open(output_file_path, "wb") as f:
+            for document_id, length in document_id_length_pairs:
+                f.write(struct.pack('>I', document_id))
+                f.write(struct.pack('>I', length))
+        logging.info(f"Document lengths saved to binary file '{output_file_path}'")
+        return 0
+    except IOError as e:
+        logging.error(f"IOError saving document lengths to '{output_file_path}': {e}")
+        return 1
+    except struct.error as e:
+        logging.error(f"Struct packing error while saving document lengths: {e}")
+        return 1
+    except Exception as e:
+        logging.error(f"Unexpected error saving document lengths to '{output_file_path}': {e}")
+        return 1
+
 def direct_search(term: str,
                   dictionary_items: List[Tuple[str, int]],
                   postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings") -> Union[List[Tuple[str, List[Tuple[int, int, List[int]]]]], None]:
@@ -834,7 +927,7 @@ def prefix_search(term_prefix: str,
 def phrase_search(phrase: str, 
                   dictionary_items: List[Tuple[str, int]],
                   postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings",
-                  stop_words: List[str] = ["the", "is", "a", "an", "and", "or", "of"]) -> Union[List[Tuple[str, List[Tuple[int, int, List[int]]]]], None]: # TODO: Use a more comprehensive stop word list
+                  stop_words: List[str] = STOPWORDS) -> Union[List[Tuple[str, List[Tuple[int, int, List[int]]]]], None]: # TODO: Use a more comprehensive stop word list
     """
     Searches for a phrase in the postings file using the dictionary.
     The phrase is expected to be a sequence of words separated by spaces.
@@ -952,95 +1045,172 @@ def phrase_search(phrase: str,
     
     return [(phrase, final_phrase_matches)]
 
-def calculate_and_save_document_lengths(source_path: Path, content_file_name: str,
-                                        output_dir: Path = DEFAULT_OUTPUT_DIR,
-                                        output_file_name: str = "document_lengths",
-                                        replace: bool = False) -> int:
+def load_document_lengths_from_file(file_path: Path) -> Union[Dict[int, int], None]:
+    if not file_path.is_file():
+        logging.error(f"Document lengths file not found: {file_path}")
+        return None
+    document_lengths: Dict[int, int] = {}
+    try:
+        with open(file_path, "rb") as f:
+            while True:
+                doc_id_bytes = f.read(4)
+                if not doc_id_bytes:
+                    break
+                length_bytes = f.read(4)
+                if not length_bytes:
+                    logging.error("Malformed document lengths file: missing length for a document ID.")
+                    break
+                doc_id = struct.unpack('>I', doc_id_bytes)[0]
+                length = struct.unpack('>I', length_bytes)[0]
+                document_lengths[doc_id] = length
+        logging.info(f"Loaded {len(document_lengths)} document lengths from '{file_path}'.")
+        return document_lengths
+    except FileNotFoundError:
+        logging.error(f"Document lengths file not found at '{file_path}'.")
+        return None
+    except struct.error as e:
+        logging.error(f"Struct unpacking error loading document lengths from '{file_path}': {e}")
+        return None
+    except Exception as e:
+        logging.error(f"Unexpected error loading document lengths from '{file_path}': {e}")
+        return None
+
+def bm25_plus_rankings(
+    query_results: List[Tuple[str, List[Tuple[int, int, List[int]]]]],
+    document_lengths: Dict[int, int],
+    average_document_length: float,
+    documents_count: int
+) -> List[Tuple[int, float]]:
     """
-    Calculates the number of words (length) for each document in the collection
-    and saves this information to a binary file. Each entry in the file consists of:
-    - Document ID (4-byte unsigned int, big-endian)
-    - Document Length (4-byte unsigned int, big-endian)
+    Ranks documents based on BM25+ scores for a given query result.
 
     Args:
-        source_path (Path): Path to the source archive (e.g., .tar.gz file).
-        content_file_name (str): Name of the content file inside the archive.
-        output_dir (Path): Directory to save the output binary file.
-        output_file_name (str): Name for the output binary file.
-        replace (bool): Whether to overwrite the output file if it exists.
+        query_results: The query results where each tuple is (term, list_of_postings).
+                       Each posting is (document_id, term_frequency, [positions]).
+        document_lengths: A dictionary mapping document_id to its total length.
+        average_document_length: Average document length of the entire collection.
+        documents_count: Total number of documents (N) in the collection.
 
     Returns:
-        int: 0 on success, 1 on failure.
+        A list of tuples where each tuple is (document_id, bm25_score), sorted by score.
     """
-    logging.debug(f"Calculating document lengths from '{source_path}/{content_file_name}' for binary output.")
+    if documents_count == 0 or average_document_length == 0:
+        logging.warning("BM25 ranking called with zero total documents or zero average document length. Returning empty list.")
+        return []
+    if not query_results:
+        return []
 
-    if not source_path.is_file():
-        logging.error(f"No such file '{source_path}'!")
-        return 1
+    k_1 = 1.5
+    b = 0.75
+    delta = 1.0
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_file_path = output_dir / output_file_name
+    bm25_scores: Dict[int, float] = {}
 
-    if output_file_path.is_file() and not replace:
-        logging.warning(f"File '{output_file_path}' already exists but the overwrite flag is set to False.")
-        return 1
+    for term, postings_list in query_results:
+        if not postings_list:
+            continue
+        
+        df_t = len(postings_list) # Documents frequency of current term
+        
+        idf_numerator = documents_count - df_t + 0.5
+        idf_denominator = df_t + 0.5
+        if idf_numerator <= 0 or idf_denominator <= 0: # Avoid math errors with extreme df_t
+            idf = 0.00000001
+        else:
+            idf = math.log((idf_numerator / idf_denominator) + 1.0)
 
-    document_id_length_pairs: list[tuple[int, int]] = []
 
-    try:
-        with tarfile.open(source_path, mode='r:*') as archive:
-            member = archive.getmember(content_file_name)
+        for document_id, term_document_frequency, _ in postings_list:
+            document_length = document_lengths.get(document_id)
+            if document_length is None:
+                logging.warning(f"Document ID {document_id} not found in document_lengths. Skipping for BM25.")
+                continue
+            if document_length == 0: # Avoid division by zero
+                document_length = average_document_length
 
-            with archive.extractfile(member) as file:
-                for line_idx, line_bytes in enumerate(file):
-                    try:
-                        line_str = line_bytes.decode().strip()
-                        document_id_str, document_content = line_str.split("\t", 1)
-                        
-                        try:
-                            document_id_int = int(document_id_str)
-                        except ValueError:
-                            logging.error(f"Could not convert document ID '{document_id_str}' to integer on line {line_idx}. Skipping.")
-                            continue
+            # BM25+ term score component
+            numerator = term_document_frequency * (k_1 + 1)
+            denominator = term_document_frequency + k_1 * (1 - b + b * (document_length / average_document_length))
+            
+            term_score = idf * ((numerator / denominator if denominator != 0 else 0) + delta)
+            
+            bm25_scores[document_id] = bm25_scores.get(document_id, 0.0) + term_score
 
-                        doc_length = len(document_content.split())
-                        document_id_length_pairs.append((document_id_int, doc_length))
+    return sorted(bm25_scores.items(), key=lambda item: item[1], reverse=True)
 
-                    except ValueError:
-                        logging.error(f"Malformed line {line_idx} (expected 'document_id\\tdocument'): '{line_str[:100]}...'. Skipping.")
-                        continue
-                    except Exception as e:
-                        logging.error(f"Error processing line {line_idx} ('{line_str[:100]}...'): {e}")
-                        continue
-    except tarfile.TarError as e:
-        logging.error(f"TarError opening or reading archive '{source_path}': {e}")
-        return 1
-    except KeyError:
-        logging.error(f"Content file '{content_file_name}' not found in archive '{source_path}'.")
-        return 1
-    except Exception as e:
-        logging.error(f"Error reading from archive '{source_path}': {e}")
-        return 1
+def search(
+    query: str,
+    dictionary_items: List[Tuple[str, int]],
+    document_lengths_map: Dict[int, int],
+    average_document_length: float,
+    total_documents_count: int,
+    postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings",
+    stop_words: List[str] = STOPWORDS
+) -> Union[List[Tuple[int, float]], None]:
+    """
+    Determines the type of search, executes it, and ranks results using BM25+.
 
-    logging.debug(f"Collected {len(document_id_length_pairs)} document ID-length pairs.")
+    Args:
+        query (str): The search query.
+        dictionary_items: Sorted dictionary items (term, offset).
+        document_lengths_map: Map of document IDs to their lengths.
+        average_document_length: Average document length in the collection.
+        total_documents_count: Total number of documents in the collection.
+        postings_file_path: Path to the postings file.
+        stop_words: List of stop words.
 
-    # Save the document ID and lengths to a binary file
-    try:
-        with open(output_file_path, "wb") as f:
-            for document_id, length in document_id_length_pairs:
-                f.write(struct.pack('>I', document_id))
-                f.write(struct.pack('>I', length))
-        logging.info(f"Document lengths saved to binary file '{output_file_path}'")
-        return 0
-    except IOError as e:
-        logging.error(f"IOError saving document lengths to '{output_file_path}': {e}")
-        return 1
-    except struct.error as e:
-        logging.error(f"Struct packing error while saving document lengths: {e}")
-        return 1
-    except Exception as e:
-        logging.error(f"Unexpected error saving document lengths to '{output_file_path}': {e}")
-        return 1
+    Returns:
+        A list of (document_id, bm25_score) tuples, sorted by score, or None on error.
+    """
+    logging.debug(f"Searching for query '{query}'")
+
+    if not query.strip():
+        logging.warning("Empty query provided.")
+        return []
+
+    results: Union[List[Tuple[str, List[Tuple[int, int, List[int]]]]], None] = None
+
+    # Check if the query is a phrase
+    if '"' in query and query.startswith('"') and query.endswith('"'): # Quoted phrase
+        phrase_content = query.strip('"')
+        results = phrase_search(phrase_content, dictionary_items, postings_file_path, stop_words)
+    elif ' ' in query.strip():
+        if not query.strip().endswith('*'):
+            results = phrase_search(query, dictionary_items, postings_file_path, stop_words)
+        else: # Handle "term *"
+            if query.endswith('*'):
+                 term_prefix = query[:-1].strip()
+                 results = prefix_search(term_prefix, dictionary_items, postings_file_path)
+            else:
+                results = phrase_search(query, dictionary_items, postings_file_path, stop_words)
+
+    # Check if the query is a prefix search
+    elif query.endswith('*'):
+        term_prefix = query[:-1]
+        results = prefix_search(term_prefix, dictionary_items, postings_file_path)
+    
+    # Otherwise, perform a direct search for a single term
+    else:
+        results = direct_search(query, dictionary_items, postings_file_path)
+
+    if results is None:
+        logging.error(f"Error during search for query '{query}'.")
+        return None
+    
+    if not results: # No initial results found
+        logging.debug(f"No initial documents found for query '{query}'.")
+        return []
+
+    # Perform BM25+ ranking on the results
+    ranked_results = bm25_plus_rankings(
+        results,
+        document_lengths_map,
+        average_document_length,
+        total_documents_count
+    )
+
+    # ranked_results is already List[Tuple[int, float]]
+    return ranked_results
 
 
 def main() -> int:
@@ -1050,6 +1220,10 @@ def main() -> int:
     #extract_documents(Path("/home/malik/Nextcloud/University/Semester 6/Information Retrieval/Aufgaben/collectionandqueries.tar.gz"),
     #                  "collection.tsv",
     #                  Path("/home/malik/Nextcloud/University/Semester 6/Information Retrieval/Aufgaben/output/documents"))
+
+    #calculate_and_save_document_lengths(
+    #    source_path=Path("/home/malik/Nextcloud/University/Semester 6/Information Retrieval/Aufgaben/collectionandqueries.tar.gz"),
+    #    content_file_name="collection.tsv")
     
     return 0
 

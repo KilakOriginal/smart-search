@@ -52,9 +52,8 @@ document.addEventListener("DOMContentLoaded", () => {
   let currentPage = 1;
   const resultsPerPage = 10;
   let allPostings = [];
-  // currentQuery is no longer needed globally here as we get it from searchInput or URL
 
-  function displayResults(results, query) { // query is passed for the overview message
+  function displayResults(results, query) {
     if (!searchResultsDiv) return;
 
     searchResultsDiv.innerHTML = ""; // Clear previous results
@@ -63,11 +62,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const searchTime = results[0];
     const queryResults = results[1];
 
-    allPostings = [];
     if (queryResults && queryResults.length > 0) {
-      queryResults.forEach(([_, postings]) => {
-        allPostings.push(...postings);
-      });
+      allPostings = queryResults;
+    } else {
+      allPostings = [];
     }
 
     if (allPostings.length === 0) {
@@ -102,9 +100,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const endIndex = startIndex + resultsPerPage;
     const paginatedPostings = allPostings.slice(startIndex, endIndex);
 
-    // resultsContainer.innerHTML = "<p>Loading page content...</p>"; 
-
-    const previewPromises = paginatedPostings.map(async ([docId, tf, positions]) => {
+    const previewPromises = paginatedPostings.map(async ([docId, _]) => {
       const docElement = document.createElement("div");
       docElement.classList.add("document-result");
 
@@ -117,13 +113,9 @@ document.addEventListener("DOMContentLoaded", () => {
       docElement.appendChild(titleElement);
 
       const previewElement = document.createElement("p");
+      previewElement.classList.add("document-preview");
       previewElement.textContent = "Loading preview...";
       docElement.appendChild(previewElement);
-      
-      // const detailsElement = document.createElement("p");
-      // detailsElement.classList.add("document-details");
-      // detailsElement.textContent = `TF: ${tf}, Positions: [${positions.join(", ")}]`;
-      // docElement.appendChild(detailsElement);
 
       try {
         // Fetch preview with default length

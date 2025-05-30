@@ -951,7 +951,6 @@ def phrase_search(phrase: str,
     if not terms:
         logging.warning("Empty phrase provided.")
         return []
-
     if len(terms) == 1:
         return direct_search(terms[0], dictionary_items, postings_file_path)
 
@@ -995,7 +994,7 @@ def phrase_search(phrase: str,
         candidate_document_ids.intersection_update(term_data_for_sorting[i]["document_map"].keys())
         if not candidate_document_ids:
             logging.debug(f"No common documents found for all terms in phrase '{phrase}' after intersection.")
-            return []
+            return bag_of_words_search(phrase, dictionary_items, postings_file_path, stop_words)
     
     # Perform positional checks on candidate_document_ids
     final_phrase_matches: List[Tuple[int, int, List[int]]] = [] # (document_id, phrase_freq, [start_positions])
@@ -1041,9 +1040,106 @@ def phrase_search(phrase: str,
             final_phrase_matches.append((document_id, len(phrase_starts_document), sorted(phrase_starts_document)))
 
     if not final_phrase_matches:
-        return []
+        return bag_of_words_search(phrase, dictionary_items, postings_file_path, stop_words)
     
     return [(phrase, final_phrase_matches)]
+
+def bag_of_words_search(phrase: str,
+                  dictionary_items: List[Tuple[str, int]],
+                  postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings",
+                  stop_words: List[str] = STOPWORDS) -> Union[List[Tuple[str, List[Tuple[int, int, List[int]]]]], None]:
+    """
+    Searches for documents containing all terms in the phrase (bag-of-words model),
+    regardless of their order. Returns results formatted for BM25 ranking.
+
+    Args:
+        phrase (str): The phrase to search for.
+        dictionary_items (List[Tuple[str, int]]): Dictionary items (term, offset_in_postings_file),
+                                                         sorted lexicographically by term.
+        postings_file_path (Path): Path to the postings file.
+        stop_words (List[str]): List of stop words to exclude.
+
+    Returns:
+        Union[List[Tuple[str, List[Tuple[int, int, List[int]]]]], None]:
+            A list of tuples, where each tuple is (term_from_query, list_of_postings).
+            Each posting is (document_id, term_frequency, [positions]), but only for documents
+            that contain ALL terms from the query.
+            Returns an empty list ([]) if no documents contain all terms or if the query is empty.
+            Returns None if a major error occurs during postings retrieval.
+    """
+    logging.debug(f"Performing bag-of-words search for: '{phrase}'")
+
+    terms = [word.lower() for word in phrase.strip().split() if word.lower() not in stop_words]
+    if not terms:
+        logging.warning("Empty phrase provided for bag_of_words_search after stop word removal.")
+        return []
+    if len(terms) == 1:
+        return direct_search(terms[0], dictionary_items, postings_file_path)
+
+    term_data_for_sorting: List[Dict[str, any]] = []
+    
+    all_terms_full_postings_map: Dict[str, Dict[int, Tuple[int, List[int]]]] = {}
+
+    for term in terms:
+        term_postings_result = direct_search(term, dictionary_items, postings_file_path)
+
+        if term_postings_result is None:
+            logging.error(f"Error retrieving postings for term '{term}' in bag_of_words_search for phrase '{phrase}'.")
+            return None
+        if not term_postings_result:
+            logging.debug(f"Term '{term}' in phrase '{phrase}' not found in index. Bag of words cannot exist with all terms.")
+            return []
+
+        actual_term_postings_list = term_postings_result[0][1]
+        
+        current_term_doc_data: Dict[int, Tuple[int, List[int]]] = {}
+        for doc_id, tf, positions_list in actual_term_postings_list:
+            current_term_doc_data[doc_id] = (tf, positions_list)
+        
+        all_terms_full_postings_map[term] = current_term_doc_data
+        term_data_for_sorting.append({
+            "term": term,
+            "document_map_tf_positions": current_term_doc_data,
+            "doc_count": len(current_term_doc_data)
+        })
+
+    term_data_for_sorting.sort(key=lambda x: x["doc_count"])
+
+    # Intersect document IDs, starting with the rarest term
+    if not term_data_for_sorting:
+        return []
+    
+    # Initialize intersected_document_ids with document_ids from the rarest term's postings
+    intersected_document_ids = set(term_data_for_sorting[0]["document_map_tf_positions"].keys())
+
+    for i in range(1, len(term_data_for_sorting)):
+        intersected_document_ids.intersection_update(term_data_for_sorting[i]["document_map_tf_positions"].keys())
+        if not intersected_document_ids:
+            logging.debug(f"No common documents found for all terms in phrase '{phrase}' after intersection.")
+            return []
+    
+    # Construct results for BM25 ranking
+    results_for_ranking: List[Tuple[str, List[Tuple[int, int, List[int]]]]] = []
+    
+    for term_from_query in terms:
+        term_specific_postings_for_ranking = []
+        if term_from_query in all_terms_full_postings_map:
+            term_postings_data = all_terms_full_postings_map[term_from_query]
+            for doc_id in intersected_document_ids:
+                if doc_id in term_postings_data:
+                    tf, positions = term_postings_data[doc_id]
+                    term_specific_postings_for_ranking.append((doc_id, tf, positions))
+        
+        if term_specific_postings_for_ranking:
+            # Sort postings by document_id for consistency (not required)
+            term_specific_postings_for_ranking.sort(key=lambda x: x[0])
+            results_for_ranking.append((term_from_query, term_specific_postings_for_ranking))
+            
+    if not results_for_ranking:
+        logging.debug(f"Bag-of-words search for '{phrase}' yielded no results for ranking, though intersection was non-empty.")
+        return []
+            
+    return results_for_ranking
 
 def load_document_lengths_from_file(file_path: Path) -> Union[Dict[int, int], None]:
     if not file_path.is_file():

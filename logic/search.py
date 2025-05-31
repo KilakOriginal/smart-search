@@ -976,6 +976,7 @@ def tokenise_boolean_query(query: str) -> List[str]:
     Tokenises a boolean query string into individual terms and operators.
     Operators: ! (not), ^ (and), | (or), ~ (xor), /<number> (near)
     Grouping: (, )
+    Phrases: "term1 term2"
     Escape sequences: \ (to escape special characters)
 
     Args:
@@ -988,11 +989,44 @@ def tokenise_boolean_query(query: str) -> List[str]:
     current_term_characters = []
     i = 0
     n = len(query)
+    char_operators_and_parentheses = ['(', ')', '!', '^', '|', '~']
 
     while i < n:
         char = query[i]
 
-        if char == '\\':  # Escape character
+        if char == '"':  # Start of a phrase
+            if current_term_characters:
+                tokens.append(''.join(current_term_characters))
+                current_term_characters = []
+            
+            phrase_content_characters = []
+            i += 1
+            phrase_closed = False
+            while i < n:
+                phrase_character = query[i]
+                if phrase_character == '\\':  # Escape within phrase
+                    if i + 1 < n:
+                        # Add the escaped character (e.g., " or \) literally
+                        phrase_content_characters.append(query[i + 1])
+                        i += 2
+                    else:  # Dangling escape at end of phrase/query
+                        phrase_content_characters.append('\\') # Treat as literal backslash
+                        i += 1
+                elif phrase_character == '"':  # End of phrase
+                    tokens.append(f'"{''.join(phrase_content_characters)}"')
+                    i += 1
+                    phrase_closed = True
+                    break
+                else:
+                    phrase_content_characters.append(phrase_character)
+                    i += 1
+            
+            if not phrase_closed:
+                logging.warning("Unterminated phrase in query. Treating the content as a literal term including the initial quote.")
+                tokens.append(f'"{''.join(phrase_content_characters)}')
+            continue
+
+        elif char == '\\':  # Escape character (outside of a phrase)
             if current_term_characters:
                 tokens.append(''.join(current_term_characters))
                 current_term_characters = []
@@ -1003,7 +1037,7 @@ def tokenise_boolean_query(query: str) -> List[str]:
                 logging.warning("Trailing escape character at the end of query. Treating as literal '\\'.")
                 current_term_characters.append('\\')
                 i += 1
-        elif char in ('(', ')', '!', '^', '|', '~'):
+        elif char in char_operators_and_parentheses:
             if current_term_characters:
                 tokens.append(''.join(current_term_characters))
                 current_term_characters = []
@@ -1020,15 +1054,10 @@ def tokenise_boolean_query(query: str) -> List[str]:
                 tokens.append(query[i:j])
                 i = j
             else:
-                # If '/' is not part of /<number>, it's treated as a term character by the else block below
-                # or you can explicitly log a warning and ignore it as per your original code:
                 logging.warning(f"Character '/' at position {i} not forming a valid NEAR operator. Treating as term character.")
                 current_term_characters.append(char) # Treat as part of a term
                 i += 1
-                #
-                #
-                #
-        elif char.isspace(): # Space delimiter
+        elif char.isspace():
             if current_term_characters:
                 tokens.append(''.join(current_term_characters))
                 current_term_characters = []
@@ -1040,8 +1069,7 @@ def tokenise_boolean_query(query: str) -> List[str]:
     if current_term_characters:
         tokens.append(''.join(current_term_characters))
 
-    # Filter out empty string tokens
-    return [token for token in tokens if token]
+    return [token for token in tokens if token] # Filter out empty tokens
 
 def to_reverse_polish_notation(tokens: List[str]) -> List[str]:
     """
@@ -1062,9 +1090,9 @@ def to_reverse_polish_notation(tokens: List[str]) -> List[str]:
     standard_operators = ['!', '^', '|', '~']
 
     for token in tokens:
-        is_std_op = token in standard_operators
-        is_near_op = token.startswith('/') and len(token) > 1 and token[1:].isdigit()
-        is_operator_char = is_std_op or is_near_op
+        is_standard_operator = token in standard_operators
+        is_near_operatorerator = token.startswith('/') and len(token) > 1 and token[1:].isdigit()
+        is_operator_char = is_standard_operator or is_near_operatorerator
 
         if not is_operator_char and token not in ['(', ')']:  # Operand
             output_queue.append(token)
@@ -1079,7 +1107,7 @@ def to_reverse_polish_notation(tokens: List[str]) -> List[str]:
                 return None
             operator_stack.pop()  # Pop '('
         else:
-            operator_key = '/' if is_near_op else token
+            operator_key = '/' if is_near_operatorerator else token
             
             while (operator_stack and operator_stack[-1] != '(' and
                    (precedence.get(operator_stack[-1], 0) > precedence.get(operator_key, 0) or
@@ -1097,55 +1125,65 @@ def to_reverse_polish_notation(tokens: List[str]) -> List[str]:
     logging.debug(f"RPN: {' '.join(output_queue if output_queue is not None else [])}")
     return output_queue
 
+
+def get_document_ids_for_phrase(
+    phrase_query: str,
+    dictionary_items: List[Tuple[str, int]],
+    postings_file_path: Path,
+    stop_words: List[str]) -> Union[Set[int], None]:
+    """Helper to get document IDs for a phrase query."""
+    logging.debug(f"Getting document IDs for phrase: '{phrase_query}'")
+
+    phrase_search_results = phrase_search(phrase_query, dictionary_items, postings_file_path, stop_words)
+
+    if phrase_search_results is None:
+        return None
+    if not phrase_search_results:
+        return set()
+
+    doc_ids = {match[0] for match in phrase_search_results[0][1]}
+    return doc_ids
+
 def evaluate_rpn(
     tokens: List[str],
     dictionary_items: List[Tuple[str, int]],
-    document_ids: Set[int],
-    postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings") -> Union[Set[int], None]:
-    """
-    Evaluates a Reverse Polish Notation (RPN) expression against the postings file.
-
-    Args:
-        tokens (List[str]): The RPN expression tokens.
-        dictionary_items (List[Tuple[str, int]]): The pre-loaded dictionary items 
-                                                         (term, offset_in_postings_file), sorted by term.
-        document_ids (Set[int]): The set of document IDs to consider for the evaluation.
-        postings_file_path (Path): Path to the postings file.
-
-    Returns:
-        Union[Set[int], None]: The set of document IDs that match the RPN expression.
-                                Returns None if an error occurs during evaluation.
-    """
-    logging.debug(f"Evaluating RPN expression: {' '.join(tokens)}")
-
-    if not tokens:
-        logging.error("Empty or None RPN tokens provided for evaluation.")
+    universal_document_ids: Set[int],
+    postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings",
+    stop_words: List[str] = STOPWORDS
+) -> Union[Set[int], None]:
+    if tokens is None:
         return None
+    logging.debug(f"Evaluating RPN expression: {' '.join(tokens)}")
 
     operand_stack: List[Union[str, Set[int]]] = []
 
-    # Helper to resolve an item from stack (str or Set[int]) to Set[int]
+    # Helper to resolve an item from stack
     def _resolve_to_set(item: Union[str, Set[int]], operation_name: str) -> Union[Set[int], None]:
         if isinstance(item, set):
             return item
         if isinstance(item, str):
-            documents = get_document_ids_for_term(item, dictionary_items, postings_file_path)
-            if documents is None:
-                logging.error(f"Error fetching doc IDs for term '{item}' (operand for {operation_name}) in RPN eval.")
+            if item.startswith('"') and item.endswith('"') and len(item) > 1:
+                phrase_content = item[1:-1] # Extract content without quotes
+                docs = get_document_ids_for_phrase(phrase_content, dictionary_items, postings_file_path, stop_words)
+            else:
+                docs = get_document_ids_for_term(item, dictionary_items, postings_file_path)
+            
+            if docs is None:
+                logging.error(f"Error fetching doc IDs for operand '{item}' (for {operation_name}) in RPN eval.")
                 return None
-            return documents
+            return docs
         logging.error(f"Invalid type on RPN stack for {operation_name}: {type(item)}. Expected str or set.")
         return None
 
     for token in tokens:
-        is_standard_operator = token in ['!', '^', '|', '~']
-        is_near_operator = token.startswith('/') and len(token) > 1 and token[1:].isdigit()
-        is_operator = is_standard_operator or is_near_operator
+        is_standard_operatorerator = token in ['!', '^', '|', '~']
+        is_near_operatorerator = token.startswith('/') and len(token) > 1 and token[1:].isdigit()
+        is_operator = is_standard_operatorerator or is_near_operatorerator
 
         if not is_operator:  # Operand
-            operand_stack.append(token.lower())
+            operand_stack.append(token)
         
-        elif is_near_operator:
+        elif is_near_operatorerator:
             try:
                 k = int(token[1:])
                 if k < 1: 
@@ -1159,90 +1197,85 @@ def evaluate_rpn(
                 logging.error(f"NEAR operator '{token}' needs two term operands on stack.")
                 return None
             
-            operand_right = operand_stack.pop()
-            operand_left = operand_stack.pop()
+            right_operator = operand_stack.pop()
+            left_operator = operand_stack.pop()
 
-            if not (isinstance(operand_left, str) and isinstance(operand_right, str)):
-                logging.error(f"NEAR operator '{token}' received non-term operands. Operands must be terms. Got: {type(operand_left)}, {type(operand_right)}")
+            if not (isinstance(left_operator, str) and not (left_operator.startswith('"') and left_operator.endswith('"')) and
+                    isinstance(right_operator, str) and not (right_operator.startswith('"') and right_operator.endswith('"'))):
+                logging.error(f"NEAR operator '{token}' currently only supports simple (non-phrase) term operands. Got: {type(left_operator)}, {type(right_operator)}")
                 return None 
             
-            termA_str, termB_str = operand_left, operand_right
+            termA, termB = left_operator.lower(), right_operator.lower()
 
-            postingsA_data = direct_search(termA_str, dictionary_items, postings_file_path)
-            if postingsA_data is None: return None
-            termA_positions_map: Dict[int, List[int]] = {} # document_id -> [positions]
-            if postingsA_data:
-                termA_positions_map = {document_id: pos_list for document_id, _, pos_list in postingsA_data[0][1]}
+            postingsA = direct_search(termA, dictionary_items, postings_file_path)
+            if postingsA is None: return None
+            positionsA: Dict[int, List[int]] = {}
+            if postingsA:
+                positionsA = {doc_id: positions_list for doc_id, _, positions_list in postingsA[0][1]}
 
-            postingsB_data = direct_search(termB_str, dictionary_items, postings_file_path)
-            if postingsB_data is None: return None
-            termB_positions_map: Dict[int, List[int]] = {} # document_id -> [positions]
-            if postingsB_data:
-                termB_positions_map = {document_id: pos_list for document_id, _, pos_list in postingsB_data[0][1]}
+            postingsB = direct_search(termB, dictionary_items, postings_file_path)
+            if postingsB is None: return None
+            positionsB: Dict[int, List[int]] = {}
+            if postingsB:
+                positionsB = {doc_id: positions_list for doc_id, _, positions_list in postingsB[0][1]}
             
-            if not termA_positions_map or not termB_positions_map: # One or both terms not found or have no postings
-                operand_stack.append(set()) # NEAR results in empty set if a term is missing
+            if not positionsA or not positionsB:
+                operand_stack.append(set())
                 continue
 
-            common_document_ids = set(termA_positions_map.keys()).intersection(termB_positions_map.keys())
+            common_document_ids = set(positionsA.keys()).intersection(positionsB.keys())
             near_documents_result = set()
 
-            for doc_id in common_document_ids:
-                pos_listA = termA_positions_map[doc_id]
-                pos_listB = termB_positions_map[doc_id]
-                found_near_in_doc = False
-                for pA in pos_listA:
-                    for pB in pos_listB:
-                        distance = abs(pA - pB)
+            for document_id_near in common_document_ids:
+                positions_listA = positionsA[document_id_near]
+                positions_listB = positionsB[document_id_near]
+                found_near_in_document = False
+                for positionA in positions_listA:
+                    for positionB in positions_listB:
+                        distance = abs(positionA - positionB)
                         if 1 <= distance <= k:
-                            near_documents_result.add(doc_id)
-                            found_near_in_doc = True
+                            near_documents_result.add(document_id_near)
+                            found_near_in_document = True
                             break
-                    if found_near_in_doc:
+                    if found_near_in_document:
                         break
             operand_stack.append(near_documents_result)
 
-        elif token == '!': # Unary NOT
+        elif token == '!':
             if not operand_stack:
                 logging.error("Not operator '!' encountered with no operands in stack.")
                 return None
-            
             operand_item_to_negate = operand_stack.pop()
             operand_set_to_negate = _resolve_to_set(operand_item_to_negate, "NOT")
             if operand_set_to_negate is None: return None
-
-            if document_ids is None: # Should be checked by caller
+            if universal_document_ids is None:
                 logging.error("Cannot perform NOT: universal set of documents not provided (is None).")
                 return None 
-            
-            result = document_ids - operand_set_to_negate
+            result = universal_document_ids - operand_set_to_negate
             operand_stack.append(result)
             
         else: # Binary operators: ^, |, ~
             if len(operand_stack) < 2:
                 logging.error(f"Operator '{token}' encountered with insufficient operands in stack.")
                 return None
-            
-            operand_right = operand_stack.pop()
-            operand_left = operand_stack.pop()
+            right_operator = operand_stack.pop()
+            left_operator = operand_stack.pop()
 
-            # Resolve operands to Set[int] if they are strings
-            op1_set = _resolve_to_set(operand_left, token)
-            op2_set = _resolve_to_set(operand_right, token)
+            left_set = _resolve_to_set(left_operator, token)
+            right_set = _resolve_to_set(right_operator, token)
 
-            if op1_set is None or op2_set is None: return None
+            if left_set is None or right_set is None: return None
 
             if token == '^':  # AND
-                operand_stack.append(op1_set.intersection(op2_set))
-            elif token == '|':  # OR
-                operand_stack.append(op1_set.union(op2_set))
-            elif token == '~':  # XOR
-                operand_stack.append(op1_set.symmetric_difference(op2_set))
-            else:
+                operand_stack.append(left_set.intersection(right_set))
+            elif token == '|': # OR
+                operand_stack.append(left_set.union(right_set))
+            elif token == '~': # XOR
+                operand_stack.append(left_set.symmetric_difference(right_set))
+            else: # Unknown operator
                 logging.error(f"Unknown operator '{token}' encountered in RPN evaluation logic.")
                 return None
 
-    # Final result processing
     if len(operand_stack) == 1:
         final_item = operand_stack[0]
         final_set = _resolve_to_set(final_item, "final result")
@@ -1250,7 +1283,7 @@ def evaluate_rpn(
              logging.error("Failed to resolve final RPN stack item to a document set.")
              return None
         return final_set
-    elif not operand_stack and not tokens: # Empty query
+    elif not operand_stack and not tokens:
         return set()
     else:
         logging.error(f"RPN evaluation ended with invalid stack size: {len(operand_stack)}. Stack: {operand_stack}")
@@ -1275,7 +1308,8 @@ def is_boolean_query(query: str) -> bool:
 def boolean_search(query: str,
                     dictionary_items: List[Tuple[str, int]],
                     postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings",
-                    document_ids: Set[int] = None) -> Union[Set[int], None]:
+                    universal_document_ids: Set[int] = None,
+                    stop_words: List[str] = STOPWORDS) -> Union[Set[int], None]:
 
     """
     Searches for a boolean query in the postings file using the dictionary.
@@ -1289,7 +1323,7 @@ def boolean_search(query: str,
         dictionary_items (List[Tuple[str, int]]): Dictionary items (term, offset_in_postings_file), 
                                                          sorted lexicographically by term.
         postings_file_path (Path): Path to the postings file.
-        document_ids (Set[int]): Optional set of document IDs to limit the search space.
+        universal_document_ids (Set[int]): Optional set of document IDs to limit the search space.
 
     Returns:
         Union[Set[int], None]: 
@@ -1302,48 +1336,76 @@ def boolean_search(query: str,
 
     if not query:
         logging.warning("Empty query provided.")
-        return set()
+        return []
 
     try:
         tokens = tokenise_boolean_query(query)
         if not tokens:
             logging.warning(f"Query '{query}' tokenisation resulted in no valid tokens.")
-            return set()
-        
-        original_terms = set([token.lower() for token in tokens if token not in ['!', '^', '|', '~', '(', ')'] and not token.startswith('/')])
+            return []
+
+        original_operands = []
+        for t in tokens:
+            is_standard_operator = t in ['!', '^', '|', '~']
+            is_near_operator = t.startswith('/') and len(t) > 1 and t[1:].isdigit()
+            is_parentheses = t in ['(', ')']
+            if not (is_standard_operator or is_near_operator or is_parentheses):
+                original_operands.append(t)
 
         rpn_tokens = to_reverse_polish_notation(tokens)
-        if not rpn_tokens and original_terms:
-            logging.warning(f"Query '{query}' resulted in empty RPN despite terms. Check for balanced operators.")
-        if not rpn_tokens and not original_terms:
-            return set()  # Empty query
+        if rpn_tokens is None:
+            logging.error(f"Failed to convert query '{query}' to RPN.")
+            return [] 
+        if not rpn_tokens:
+            return []
+
+        active_universal_set = universal_document_ids if universal_document_ids is not None else set()
         
-        if not document_ids:
-            logging.warning("No document IDs provided for boolean search. Unable to perform NOT operations.")
+        result_document_ids = evaluate_rpn(rpn_tokens, dictionary_items, active_universal_set, postings_file_path, stop_words)
 
-        result_set = evaluate_rpn(rpn_tokens, dictionary_items, document_ids or set(), postings_file_path)
-
-        if result_set is None:
+        if result_document_ids is None:
             logging.error(f"Error evaluating RPN for query '{query}'.")
-            return None
+            return None 
+        if not result_document_ids:
+            logging.debug(f"Boolean query '{query}' yielded no matching documents.")
+            return []
 
         results_for_ranking: List[Tuple[str, List[Tuple[int, int, List[int]]]]] = []
-
-        for term in original_terms:
-            term_postings = direct_search(term, dictionary_items, postings_file_path)
-
-            if term_postings and term_postings[0][1]:
-                term_name, postings_list = term_postings[0]
-
-                filtered_postings = [(doc_id, tf, positions) for doc_id, tf, positions in postings_list if doc_id in result_set]
-
-                if filtered_postings:
-                    results_for_ranking.append((term_name, filtered_postings))
-
-        if not results_for_ranking and result_set:
-            logging.debug(f"Boolean search yielded documents, but no terms for BM25 scoring matched those documents.")
         
-        return results_for_ranking if results_for_ranking else set()
+        unique_operands = sorted(list(set(original_operands)))
+
+        for operand_token in unique_operands:
+            operand_matches = []
+            term_or_phrase_for_key = ""
+
+            if operand_token.startswith('"') and operand_token.endswith('"') and len(operand_token) > 1:
+                phrase_content = operand_token[1:-1]
+                term_or_phrase_for_key = operand_token # Use the quoted form as the "term" key for BM25
+                phrase_search_result_list = phrase_search(phrase_content, dictionary_items, postings_file_path, stop_words)
+                if phrase_search_result_list:
+                    all_phrase_matches = phrase_search_result_list[0][1]
+                    for document_id, freq, positions_list in all_phrase_matches:
+                        if document_id in result_document_ids:
+                            operand_matches.append((document_id, freq, positions_list))
+            else:
+                term_to_search = operand_token.lower()
+                term_or_phrase_for_key = term_to_search
+                direct_search_result_list = direct_search(term_to_search, dictionary_items, postings_file_path)
+                if direct_search_result_list:
+                    all_term_postings = direct_search_result_list[0][1]
+                    for document_id, tf, positions_list in all_term_postings:
+                        if document_id in result_document_ids:
+                            operand_matches.append((document_id, tf, positions_list))
+            
+            if operand_matches:
+                operand_matches.sort(key=lambda x: x[0])
+                results_for_ranking.append((term_or_phrase_for_key, operand_matches))
+        
+        if not results_for_ranking and result_document_ids:
+            logging.debug(f"Boolean search for '{query}' yielded {len(result_document_ids)} documents, but no scorable terms/phrases for BM25.")
+        
+        return results_for_ranking
+
     except ValueError as e:
         logging.error(f"Boolean query processing error for '{query}': {e}")
         return None
@@ -1720,7 +1782,9 @@ def search(
     # Check if the query is a boolean query
     if is_boolean_query(query):
         logging.debug(f"Query '{query}' identified as a boolean query.")
-        results = boolean_search(query, dictionary_items, postings_file_path, document_ids)
+        # Pass `document_ids` as `universal_document_ids` and `stop_words` as `stop_words`
+        results = boolean_search(query, dictionary_items, postings_file_path, 
+                                 document_ids, stop_words)
     # Check if the query is a phrase
     elif '"' in query and query.startswith('"') and query.endswith('"'): # Quoted phrase
         phrase_content = query.strip('"')
@@ -1737,8 +1801,7 @@ def search(
             else:
                 results = phrase_search(query, dictionary_items, postings_file_path, stop_words)
 
-    # Check if the query is a prefix search
-    elif query.endswith('*'):
+    # Check if the query is a prefix search    elif query.endswith('*'):
         logging.debug(f"Query '{query}' identified as a prefix search.")
         term_prefix = query[:-1]
         results = prefix_search(term_prefix, dictionary_items, postings_file_path)

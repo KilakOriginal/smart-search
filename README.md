@@ -13,7 +13,7 @@
 ## Syntax
 - **Phrase queries**: Simply type the phrase into the search box and press enter or click on the magnifying glass icon.
 - **Prefix queries**: Type in a term followed by a `*` and press enter or click on the magnifying glass icon.
-- **Boolean queris**: Use `!` (exclamation point) for a logical not, `^` (circumflex) for a logical and, `|` (pipe) for a logical or, `~` (tilde) for a logical exclusive or, `/<distance>` (solidus + number) for a near operation and use `()` (parantheses) for prioritisation. Additionally, a `\` (reverse solidus) can be used to escape these special characters (including the reverse solidus itself).
+- **Boolean queris**: Use `!` (exclamation point) for a logical not, `^` (circumflex) for a logical and, `|` (pipe) for a logical or, `~` (tilde) for a logical exclusive or, `/<distance>` (solidus + number) for a near operation and use `()` (parantheses) for prioritisation. Additionally, a `\` (reverse solidus) can be used to escape these special characters (including the reverse solidus itself). Surround parts of the input with `"` (double quotes) to mark them as phrases.
 
 ## Future Development
 - Add prefix queries

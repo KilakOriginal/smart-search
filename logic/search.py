@@ -1785,23 +1785,19 @@ def search(
         # Pass `document_ids` as `universal_document_ids` and `stop_words` as `stop_words`
         results = boolean_search(query, dictionary_items, postings_file_path, 
                                  document_ids, stop_words)
-    # Check if the query is a phrase
+
     elif '"' in query and query.startswith('"') and query.endswith('"'): # Quoted phrase
         phrase_content = query.strip('"')
         results = phrase_search(phrase_content, dictionary_items, postings_file_path, stop_words)
-    elif ' ' in query.strip():
-        logging.debug(f"Query '{query}' identified as a phrase search or term with wildcard.")
-        if not query.strip().endswith('*'):
-            results = phrase_search(query, dictionary_items, postings_file_path, stop_words)
-        else: # Handle "term *"
-            logging.debug(f"Query '{query}' identified as a prefix search.")
-            if query.endswith('*'):
-                 term_prefix = query[:-1].strip()
-                 results = prefix_search(term_prefix, dictionary_items, postings_file_path)
-            else:
-                results = phrase_search(query, dictionary_items, postings_file_path, stop_words)
 
-    # Check if the query is a prefix search    elif query.endswith('*'):
+    # Check if the query is a phrase
+    if ' ' in query.strip():
+        logging.debug(f"Query '{query}' identified as a phrase search or term with wildcard.")
+    if not query.strip().endswith('*'):
+        results = phrase_search(query, dictionary_items, postings_file_path, stop_words)
+
+    # Check if the query is a prefix search
+    elif query.endswith('*'):
         logging.debug(f"Query '{query}' identified as a prefix search.")
         term_prefix = query[:-1]
         results = prefix_search(term_prefix, dictionary_items, postings_file_path)

@@ -1773,7 +1773,8 @@ def search(
     """
     logging.debug(f"Searching for query '{query}'")
 
-    if not query.strip():
+    query = query.strip()
+    if not query:
         logging.warning("Empty query provided.")
         return []
 
@@ -1786,26 +1787,25 @@ def search(
         results = boolean_search(query, dictionary_items, postings_file_path, 
                                  document_ids, stop_words)
 
-    elif '"' in query and query.startswith('"') and query.endswith('"'): # Quoted phrase
-        phrase_content = query.strip('"')
-        results = phrase_search(phrase_content, dictionary_items, postings_file_path, stop_words)
-
-    # Check if the query is a phrase
-    if ' ' in query.strip():
-        logging.debug(f"Query '{query}' identified as a phrase search or term with wildcard.")
-    if not query.strip().endswith('*'):
-        results = phrase_search(query, dictionary_items, postings_file_path, stop_words)
-
-    # Check if the query is a prefix search
-    elif query.endswith('*'):
-        logging.debug(f"Query '{query}' identified as a prefix search.")
-        term_prefix = query[:-1]
-        results = prefix_search(term_prefix, dictionary_items, postings_file_path)
-    
-    # Otherwise, perform a direct search for a single term
     else:
-        logging.debug(f"Query '{query}' identified as a direct search for a single term.")
-        results = direct_search(query, dictionary_items, postings_file_path)
+        if '"' in query and query.startswith('"') and query.endswith('"'): # Quoted phrase
+            phrase_content = query.strip('"')
+
+        # Check if the query is a phrase
+        if ' ' in query.strip() and not query.strip().endswith('*'):
+            logging.debug(f"Query '{query}' identified as a phrase search.")
+            results = phrase_search(query, dictionary_items, postings_file_path, stop_words)
+
+        # Check if the query is a prefix search
+        elif query.endswith('*'):
+            logging.debug(f"Query '{query}' identified as a prefix search.")
+            term_prefix = query[:-1]
+            results = prefix_search(term_prefix, dictionary_items, postings_file_path)
+        
+        # Otherwise, perform a direct search for a single term
+        else:
+            logging.debug(f"Query '{query}' identified as a direct search for a single term.")
+            results = direct_search(query, dictionary_items, postings_file_path)
 
     if results is None:
         logging.error(f"Error during search for query '{query}'.")

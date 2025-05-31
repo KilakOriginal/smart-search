@@ -89,6 +89,7 @@ h1 {
     border: 1px solid #dfe1e5;
     border-radius: 30px;
     color: #333;
+    overflow: hidden;
 }
 
 .document-result a {

@@ -8,7 +8,7 @@ import shutil
 import struct
 import io
 import bisect
-from typing import Union, List, Tuple, Dict
+from typing import Union, List, Tuple, Dict, Set
 from .utils import setup_logging
 import math
 
@@ -869,6 +869,488 @@ def direct_search(term: str,
 
     return postings_result
 
+def load_document_lengths_from_file(file_path: Path) -> Union[Dict[int, int], None]:
+    if not file_path.is_file():
+        logging.error(f"Document lengths file not found: {file_path}")
+        return None
+    document_lengths: Dict[int, int] = {}
+    try:
+        with open(file_path, "rb") as f:
+            while True:
+                doc_id_bytes = f.read(4)
+                if not doc_id_bytes:
+                    break
+                length_bytes = f.read(4)
+                if not length_bytes:
+                    logging.error("Malformed document lengths file: missing length for a document ID.")
+                    break
+                doc_id = struct.unpack('>I', doc_id_bytes)[0]
+                length = struct.unpack('>I', length_bytes)[0]
+                document_lengths[doc_id] = length
+        logging.info(f"Loaded {len(document_lengths)} document lengths from '{file_path}'.")
+        return document_lengths
+    except FileNotFoundError:
+        logging.error(f"Document lengths file not found at '{file_path}'.")
+        return None
+    except struct.error as e:
+        logging.error(f"Struct unpacking error loading document lengths from '{file_path}': {e}")
+        return None
+    except Exception as e:
+        logging.error(f"Unexpected error loading document lengths from '{file_path}': {e}")
+        return None
+
+def get_unique_document_ids(postings_file_path: Path) -> Set[int]:
+    """
+    Retrieves all unique document IDs from the postings file.
+
+    Args:
+        postings_file_path (Path): Path to the postings file.
+
+    Returns:
+        Set[int]: A set of unique document IDs across all terms in the postings file.
+                  Returns an empty set if no documents are found.
+                  Returns None if an error occurs during postings retrieval.
+    """
+    logging.debug("Getting unique document IDs from postings file.")
+
+    if not postings_file_path.is_file():
+        logging.error(f"Postings file '{postings_file_path}' does not exist!")
+        return None
+
+    unique_document_ids = set()
+
+    try:
+        with open(postings_file_path, 'rb') as f:
+            while True:
+                # Read the 6-byte header for posting
+                posting_header = f.read(6)
+                if not posting_header:  # EOF
+                    break
+                if len(posting_header) < 6:
+                    logging.warning("Incomplete posting header found. Stopping reading postings.")
+                    break
+
+                # Unpack document_id (4 bytes), term_frequency (2 bytes)
+                document_id, term_frequency = struct.unpack('>IH', posting_header)
+
+                unique_document_ids.add(document_id)
+
+                # Skip to next document
+                f.seek(term_frequency * 4, 1)
+    except IOError as e:
+        logging.error(f"IOError reading postings file '{postings_file_path}': {e}")
+        return None
+    except struct.error as e:
+        logging.error(f"Struct unpacking error reading postings file '{postings_file_path}': {e}")
+        return None
+    except Exception as e:
+        logging.error(f"Unexpected error reading postings file '{postings_file_path}': {e}")
+        return None
+
+    return unique_document_ids
+
+def get_document_ids_for_term(term: str, dictionary_items: List[Tuple[str, int]], postings_file_path: Path) -> Set[int]:
+    """
+    Retrieves document IDs for a given term using the dictionary and postings file.
+
+    Args:
+        term (str): The search term.
+        dictionary_items (List[Tuple[str, int]]): The pre-loaded dictionary items 
+                                                         (term, offset_in_postings_file), sorted by term.
+        postings_file_path (Path): Path to the postings file.
+
+    Returns:
+        Set[int]: A set of document IDs where the term appears.
+                  Returns an empty set if the term is not found.
+                  Returns None if an error occurs during postings retrieval.
+    """
+    term_postings = direct_search(term, dictionary_items, postings_file_path)
+    if not term_postings or not term_postings[0][1]:
+        logging.debug(f"No postings found for term '{term}'.")
+        return set()
+    postings_list = term_postings[0][1] # [(document_id, term_frequency, [positions])]
+    return {document_id for document_id, _, _ in postings_list}
+
+def tokenise_boolean_query(query: str) -> List[str]:
+    """
+    Tokenises a boolean query string into individual terms and operators.
+    Operators: ! (not), ^ (and), | (or), ~ (xor), /<number> (near)
+    Grouping: (, )
+    Escape sequences: \ (to escape special characters)
+
+    Args:
+        query (str): The boolean query string.
+
+    Returns:
+        List[str]: A list of tokens (terms and operators).
+    """
+    tokens = []
+    current_term_characters = []
+    i = 0
+    n = len(query)
+
+    while i < n:
+        char = query[i]
+
+        if char == '\\':  # Escape character
+            if current_term_characters:
+                tokens.append(''.join(current_term_characters))
+                current_term_characters = []
+            if i + 1 < n:
+                current_term_characters.append(query[i + 1])
+                i += 2
+            else:
+                logging.warning("Trailing escape character at the end of query. Treating as literal '\\'.")
+                current_term_characters.append('\\')
+                i += 1
+        elif char in ('(', ')', '!', '^', '|', '~'):
+            if current_term_characters:
+                tokens.append(''.join(current_term_characters))
+                current_term_characters = []
+            tokens.append(char)
+            i += 1
+        elif char == '/': # Potential NEAR operator /<number>
+            if current_term_characters:
+                tokens.append(''.join(current_term_characters))
+                current_term_characters = []
+            if i + 1 < n and query[i + 1].isdigit():
+                j = i + 1
+                while j < n and query[j].isdigit():
+                    j += 1
+                tokens.append(query[i:j])
+                i = j
+            else:
+                # If '/' is not part of /<number>, it's treated as a term character by the else block below
+                # or you can explicitly log a warning and ignore it as per your original code:
+                logging.warning(f"Character '/' at position {i} not forming a valid NEAR operator. Treating as term character.")
+                current_term_characters.append(char) # Treat as part of a term
+                i += 1
+                #
+                #
+                #
+        elif char.isspace(): # Space delimiter
+            if current_term_characters:
+                tokens.append(''.join(current_term_characters))
+                current_term_characters = []
+            i += 1
+        else: # Term character
+            current_term_characters.append(char)
+            i += 1
+
+    if current_term_characters:
+        tokens.append(''.join(current_term_characters))
+
+    # Filter out empty string tokens
+    return [token for token in tokens if token]
+
+def to_reverse_polish_notation(tokens: List[str]) -> List[str]:
+    """
+    Converts a list of infix tokens to Reverse Polish Notation (RPN) using the Shunting Yard algorithm.
+
+    Args:
+        tokens (List[str]): A list of tokens from a boolean query.
+
+    Returns:
+        List[str]: A list of tokens in Reverse Polish Notation (RPN).
+    """
+    precedence = {'!': 4, '/': 3, '^': 2, '|': 1, '~': 1}
+    associativity = {'!': 'R', '/': 'L', '^': 'L', '|': 'L', '~': 'L'}
+
+    output_queue: List[str] = []
+    operator_stack: List[str] = []
+
+    standard_operators = ['!', '^', '|', '~']
+
+    for token in tokens:
+        is_std_op = token in standard_operators
+        is_near_op = token.startswith('/') and len(token) > 1 and token[1:].isdigit()
+        is_operator_char = is_std_op or is_near_op
+
+        if not is_operator_char and token not in ['(', ')']:  # Operand
+            output_queue.append(token)
+        elif token == '(':
+            operator_stack.append(token)
+        elif token == ')':
+            while operator_stack and operator_stack[-1] != '(':
+                output_queue.append(operator_stack.pop())
+
+            if not operator_stack or operator_stack[-1] != '(':
+                logging.error("Mismatched parentheses in query (extra ')' or missing '('). Aborting conversion to RPN.")
+                return None
+            operator_stack.pop()  # Pop '('
+        else:
+            operator_key = '/' if is_near_op else token
+            
+            while (operator_stack and operator_stack[-1] != '(' and
+                   (precedence.get(operator_stack[-1], 0) > precedence.get(operator_key, 0) or
+                    (precedence.get(operator_stack[-1], 0) == precedence.get(operator_key, 0) and
+                     associativity.get(operator_key, 'L') == 'L'))):
+                output_queue.append(operator_stack.pop())
+            operator_stack.append(token)
+
+    while operator_stack:
+        if operator_stack[-1] == '(':
+            logging.error("Mismatched parentheses in query. Aborting conversion to RPN.")
+            return None
+        output_queue.append(operator_stack.pop())
+    
+    logging.debug(f"RPN: {' '.join(output_queue if output_queue is not None else [])}")
+    return output_queue
+
+def evaluate_rpn(
+    tokens: List[str],
+    dictionary_items: List[Tuple[str, int]],
+    document_ids: Set[int],
+    postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings") -> Union[Set[int], None]:
+    """
+    Evaluates a Reverse Polish Notation (RPN) expression against the postings file.
+
+    Args:
+        tokens (List[str]): The RPN expression tokens.
+        dictionary_items (List[Tuple[str, int]]): The pre-loaded dictionary items 
+                                                         (term, offset_in_postings_file), sorted by term.
+        document_ids (Set[int]): The set of document IDs to consider for the evaluation.
+        postings_file_path (Path): Path to the postings file.
+
+    Returns:
+        Union[Set[int], None]: The set of document IDs that match the RPN expression.
+                                Returns None if an error occurs during evaluation.
+    """
+    logging.debug(f"Evaluating RPN expression: {' '.join(tokens)}")
+
+    if not tokens:
+        logging.error("Empty or None RPN tokens provided for evaluation.")
+        return None
+
+    operand_stack: List[Union[str, Set[int]]] = []
+
+    # Helper to resolve an item from stack (str or Set[int]) to Set[int]
+    def _resolve_to_set(item: Union[str, Set[int]], operation_name: str) -> Union[Set[int], None]:
+        if isinstance(item, set):
+            return item
+        if isinstance(item, str):
+            documents = get_document_ids_for_term(item, dictionary_items, postings_file_path)
+            if documents is None:
+                logging.error(f"Error fetching doc IDs for term '{item}' (operand for {operation_name}) in RPN eval.")
+                return None
+            return documents
+        logging.error(f"Invalid type on RPN stack for {operation_name}: {type(item)}. Expected str or set.")
+        return None
+
+    for token in tokens:
+        is_standard_operator = token in ['!', '^', '|', '~']
+        is_near_operator = token.startswith('/') and len(token) > 1 and token[1:].isdigit()
+        is_operator = is_standard_operator or is_near_operator
+
+        if not is_operator:  # Operand
+            operand_stack.append(token.lower())
+        
+        elif is_near_operator:
+            try:
+                k = int(token[1:])
+                if k < 1: 
+                    logging.error(f"Invalid k value for NEAR operator: {token}. k must be >= 1.")
+                    return None
+            except ValueError:
+                logging.error(f"Malformed NEAR operator: {token}")
+                return None
+
+            if len(operand_stack) < 2:
+                logging.error(f"NEAR operator '{token}' needs two term operands on stack.")
+                return None
+            
+            operand_right = operand_stack.pop()
+            operand_left = operand_stack.pop()
+
+            if not (isinstance(operand_left, str) and isinstance(operand_right, str)):
+                logging.error(f"NEAR operator '{token}' received non-term operands. Operands must be terms. Got: {type(operand_left)}, {type(operand_right)}")
+                return None 
+            
+            termA_str, termB_str = operand_left, operand_right
+
+            postingsA_data = direct_search(termA_str, dictionary_items, postings_file_path)
+            if postingsA_data is None: return None
+            termA_positions_map: Dict[int, List[int]] = {} # document_id -> [positions]
+            if postingsA_data:
+                termA_positions_map = {document_id: pos_list for document_id, _, pos_list in postingsA_data[0][1]}
+
+            postingsB_data = direct_search(termB_str, dictionary_items, postings_file_path)
+            if postingsB_data is None: return None
+            termB_positions_map: Dict[int, List[int]] = {} # document_id -> [positions]
+            if postingsB_data:
+                termB_positions_map = {document_id: pos_list for document_id, _, pos_list in postingsB_data[0][1]}
+            
+            if not termA_positions_map or not termB_positions_map: # One or both terms not found or have no postings
+                operand_stack.append(set()) # NEAR results in empty set if a term is missing
+                continue
+
+            common_document_ids = set(termA_positions_map.keys()).intersection(termB_positions_map.keys())
+            near_documents_result = set()
+
+            for doc_id in common_document_ids:
+                pos_listA = termA_positions_map[doc_id]
+                pos_listB = termB_positions_map[doc_id]
+                found_near_in_doc = False
+                for pA in pos_listA:
+                    for pB in pos_listB:
+                        distance = abs(pA - pB)
+                        if 1 <= distance <= k:
+                            near_documents_result.add(doc_id)
+                            found_near_in_doc = True
+                            break
+                    if found_near_in_doc:
+                        break
+            operand_stack.append(near_documents_result)
+
+        elif token == '!': # Unary NOT
+            if not operand_stack:
+                logging.error("Not operator '!' encountered with no operands in stack.")
+                return None
+            
+            operand_item_to_negate = operand_stack.pop()
+            operand_set_to_negate = _resolve_to_set(operand_item_to_negate, "NOT")
+            if operand_set_to_negate is None: return None
+
+            if document_ids is None: # Should be checked by caller
+                logging.error("Cannot perform NOT: universal set of documents not provided (is None).")
+                return None 
+            
+            result = document_ids - operand_set_to_negate
+            operand_stack.append(result)
+            
+        else: # Binary operators: ^, |, ~
+            if len(operand_stack) < 2:
+                logging.error(f"Operator '{token}' encountered with insufficient operands in stack.")
+                return None
+            
+            operand_right = operand_stack.pop()
+            operand_left = operand_stack.pop()
+
+            # Resolve operands to Set[int] if they are strings
+            op1_set = _resolve_to_set(operand_left, token)
+            op2_set = _resolve_to_set(operand_right, token)
+
+            if op1_set is None or op2_set is None: return None
+
+            if token == '^':  # AND
+                operand_stack.append(op1_set.intersection(op2_set))
+            elif token == '|':  # OR
+                operand_stack.append(op1_set.union(op2_set))
+            elif token == '~':  # XOR
+                operand_stack.append(op1_set.symmetric_difference(op2_set))
+            else:
+                logging.error(f"Unknown operator '{token}' encountered in RPN evaluation logic.")
+                return None
+
+    # Final result processing
+    if len(operand_stack) == 1:
+        final_item = operand_stack[0]
+        final_set = _resolve_to_set(final_item, "final result")
+        if final_set is None:
+             logging.error("Failed to resolve final RPN stack item to a document set.")
+             return None
+        return final_set
+    elif not operand_stack and not tokens: # Empty query
+        return set()
+    else:
+        logging.error(f"RPN evaluation ended with invalid stack size: {len(operand_stack)}. Stack: {operand_stack}")
+        return None
+
+def is_boolean_query(query: str) -> bool:
+    """
+    Checks if the given query is a boolean query.
+
+    Args:
+        query (str): The query string to check.
+
+    Returns:
+        bool: True if the query is a boolean query, False otherwise.
+    """
+    pattern = r"(?<!\\)([!^|~()]|/(\d+))"
+    if re.search(pattern, query):
+            if re.search(r"(?<!\\)([!^|~]|/(\d+))", query):
+                return True
+    return False
+
+def boolean_search(query: str,
+                    dictionary_items: List[Tuple[str, int]],
+                    postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings",
+                    document_ids: Set[int] = None) -> Union[Set[int], None]:
+
+    """
+    Searches for a boolean query in the postings file using the dictionary.
+    The query is expected to be a sequence of terms and operators in infix notation.
+    Operators: ! (not), ^ (and), | (or), ~ (xor), /<number> (near)
+    Grouping: (, )
+    Escape sequences: \ (to escape special characters)
+
+    Args:
+        query (str): The boolean query string.
+        dictionary_items (List[Tuple[str, int]]): Dictionary items (term, offset_in_postings_file), 
+                                                         sorted lexicographically by term.
+        postings_file_path (Path): Path to the postings file.
+        document_ids (Set[int]): Optional set of document IDs to limit the search space.
+
+    Returns:
+        Union[Set[int], None]: 
+            A set of document IDs that match the boolean query.
+            Returns an empty set if no documents match the query.
+            Returns None if a major error occurs (e.g., file not found, struct error).
+    """
+    logging.debug(f"Searching for boolean query '{query}'")
+    query = query.strip()
+
+    if not query:
+        logging.warning("Empty query provided.")
+        return set()
+
+    try:
+        tokens = tokenise_boolean_query(query)
+        if not tokens:
+            logging.warning(f"Query '{query}' tokenisation resulted in no valid tokens.")
+            return set()
+        
+        original_terms = set([token.lower() for token in tokens if token not in ['!', '^', '|', '~', '(', ')'] and not token.startswith('/')])
+
+        rpn_tokens = to_reverse_polish_notation(tokens)
+        if not rpn_tokens and original_terms:
+            logging.warning(f"Query '{query}' resulted in empty RPN despite terms. Check for balanced operators.")
+        if not rpn_tokens and not original_terms:
+            return set()  # Empty query
+        
+        if not document_ids:
+            logging.warning("No document IDs provided for boolean search. Unable to perform NOT operations.")
+
+        result_set = evaluate_rpn(rpn_tokens, dictionary_items, document_ids or set(), postings_file_path)
+
+        if result_set is None:
+            logging.error(f"Error evaluating RPN for query '{query}'.")
+            return None
+
+        results_for_ranking: List[Tuple[str, List[Tuple[int, int, List[int]]]]] = []
+
+        for term in original_terms:
+            term_postings = direct_search(term, dictionary_items, postings_file_path)
+
+            if term_postings and term_postings[0][1]:
+                term_name, postings_list = term_postings[0]
+
+                filtered_postings = [(doc_id, tf, positions) for doc_id, tf, positions in postings_list if doc_id in result_set]
+
+                if filtered_postings:
+                    results_for_ranking.append((term_name, filtered_postings))
+
+        if not results_for_ranking and result_set:
+            logging.debug(f"Boolean search yielded documents, but no terms for BM25 scoring matched those documents.")
+        
+        return results_for_ranking if results_for_ranking else set()
+    except ValueError as e:
+        logging.error(f"Boolean query processing error for '{query}': {e}")
+        return None
+    except Exception as e:
+        logging.error(f"Unexpected error processing boolean query '{query}': {e}")
+        return None
+
 def prefix_search(term_prefix: str,
                   dictionary_items: List[Tuple[str, int]],
                   postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings") -> Union[List[Tuple[str, List[Tuple[int, int, List[int]]]]], None]:
@@ -1131,8 +1613,6 @@ def bag_of_words_search(phrase: str,
                     term_specific_postings_for_ranking.append((doc_id, tf, positions))
         
         if term_specific_postings_for_ranking:
-            # Sort postings by document_id for consistency (not required)
-            term_specific_postings_for_ranking.sort(key=lambda x: x[0])
             results_for_ranking.append((term_from_query, term_specific_postings_for_ranking))
             
     if not results_for_ranking:
@@ -1140,36 +1620,6 @@ def bag_of_words_search(phrase: str,
         return []
             
     return results_for_ranking
-
-def load_document_lengths_from_file(file_path: Path) -> Union[Dict[int, int], None]:
-    if not file_path.is_file():
-        logging.error(f"Document lengths file not found: {file_path}")
-        return None
-    document_lengths: Dict[int, int] = {}
-    try:
-        with open(file_path, "rb") as f:
-            while True:
-                doc_id_bytes = f.read(4)
-                if not doc_id_bytes:
-                    break
-                length_bytes = f.read(4)
-                if not length_bytes:
-                    logging.error("Malformed document lengths file: missing length for a document ID.")
-                    break
-                doc_id = struct.unpack('>I', doc_id_bytes)[0]
-                length = struct.unpack('>I', length_bytes)[0]
-                document_lengths[doc_id] = length
-        logging.info(f"Loaded {len(document_lengths)} document lengths from '{file_path}'.")
-        return document_lengths
-    except FileNotFoundError:
-        logging.error(f"Document lengths file not found at '{file_path}'.")
-        return None
-    except struct.error as e:
-        logging.error(f"Struct unpacking error loading document lengths from '{file_path}': {e}")
-        return None
-    except Exception as e:
-        logging.error(f"Unexpected error loading document lengths from '{file_path}': {e}")
-        return None
 
 def bm25_plus_rankings(
     query_results: List[Tuple[str, List[Tuple[int, int, List[int]]]]],
@@ -1240,6 +1690,7 @@ def search(
     document_lengths_map: Dict[int, int],
     average_document_length: float,
     total_documents_count: int,
+    document_ids: Set[int] = None,
     postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings",
     stop_words: List[str] = STOPWORDS
 ) -> Union[List[Tuple[int, float]], None]:
@@ -1266,14 +1717,20 @@ def search(
 
     results: Union[List[Tuple[str, List[Tuple[int, int, List[int]]]]], None] = None
 
+    # Check if the query is a boolean query
+    if is_boolean_query(query):
+        logging.debug(f"Query '{query}' identified as a boolean query.")
+        results = boolean_search(query, dictionary_items, postings_file_path, document_ids)
     # Check if the query is a phrase
-    if '"' in query and query.startswith('"') and query.endswith('"'): # Quoted phrase
+    elif '"' in query and query.startswith('"') and query.endswith('"'): # Quoted phrase
         phrase_content = query.strip('"')
         results = phrase_search(phrase_content, dictionary_items, postings_file_path, stop_words)
     elif ' ' in query.strip():
+        logging.debug(f"Query '{query}' identified as a phrase search or term with wildcard.")
         if not query.strip().endswith('*'):
             results = phrase_search(query, dictionary_items, postings_file_path, stop_words)
         else: # Handle "term *"
+            logging.debug(f"Query '{query}' identified as a prefix search.")
             if query.endswith('*'):
                  term_prefix = query[:-1].strip()
                  results = prefix_search(term_prefix, dictionary_items, postings_file_path)
@@ -1282,11 +1739,13 @@ def search(
 
     # Check if the query is a prefix search
     elif query.endswith('*'):
+        logging.debug(f"Query '{query}' identified as a prefix search.")
         term_prefix = query[:-1]
         results = prefix_search(term_prefix, dictionary_items, postings_file_path)
     
     # Otherwise, perform a direct search for a single term
     else:
+        logging.debug(f"Query '{query}' identified as a direct search for a single term.")
         results = direct_search(query, dictionary_items, postings_file_path)
 
     if results is None:

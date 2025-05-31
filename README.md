@@ -1,6 +1,6 @@
 # Smart Search
 ## About
-*Smart Search* is a simple search engine that supports both prefix and boolean text queries.
+*Smart Search* is a simple search engine that supports prefix, phrase and boolean text queries. The results page displays all relevant documents in descending order according to BM25+. There are a maximum of 10 results per page. Each result consists of a title and a preview. You can also view the full documents by clicking on their respective titles.
 
 ## Usage
 1. Create a virtual environment (optional, but strongly recommended)
@@ -10,12 +10,14 @@
 5. Navigate to the server address in your webbrowser (`http://127.0.0.1:5000` by default)
 6. Search the corpus of documents!
 
+## Syntax
+- **Phrase queries**: Simply type the phrase into the search box and press enter or click on the magnifying glass icon.
+- **Prefix queries**: Type in a term followed by a `*` and press enter or click on the magnifying glass icon.
+- **Boolean queris**: Use `!` (exclamation point) for a logical not, `^` (circumflex) for a logical and, `|` (pipe) for a logical or, `~` (tilde) for a logical exclusive or, `/<distance>` (solidus + number) for a near operation and use `()` (parantheses) for prioritisation. Additionally, a `\` (reverse solidus) can be used to escape these special characters (including the reverse solidus itself).
+
 ## Future Development
-- [ ] More visually appealing rendering of search results
-- [ ] Add document previews
-- [ ] Add pagination to search results
-- [ ] Render documents in a user-friendly way (clickable links, etc.)
-- [ ] Improve core search algorithm (specifically ranking of results)
+- Add prefix queries
+- Add search suggestions
 
 ## Contributing
 If you want to contribute to this project, feel free to open an issue or a pull request. All contributions are welcome!

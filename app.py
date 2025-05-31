@@ -3,7 +3,7 @@ from logic.search import search as get_search_results, load_dictionary, load_doc
 from logic.utils import setup_logging, time_it
 import logging
 import argparse
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple, Union, Set
 from pathlib import Path
 
 DOCUMENTS_DIR = DEFAULT_OUTPUT_DIR.parent / "documents"
@@ -12,6 +12,7 @@ DICTIONARY_ITEMS: Union[List[Tuple[str, int]], None] = None
 DOCUMENT_LENGTHS: Union[Dict[int, int], None] = None
 TOTAL_DOCUMENTS: int = 0
 AVERAGE_DOCUMENT_LENGTH: float = None
+DOCUMENT_IDS: Set[int] = None
 
 POSTINGS_FILE_PATH = DEFAULT_OUTPUT_DIR / "postings"
 DICTIONARY_FILE_PATH = DEFAULT_OUTPUT_DIR / "postings_dictionary"
@@ -22,7 +23,7 @@ STOPWORDS = ["the", "is", "a", "an", "and", "or", "of"]
 PREVIEW_MAX_LENGTH = 200
 
 def load_index_data():
-    global DICTIONARY_ITEMS, DOCUMENT_LENGTHS, TOTAL_DOCUMENTS, AVERAGE_DOCUMENT_LENGTH
+    global DICTIONARY_ITEMS, DOCUMENT_LENGTHS, TOTAL_DOCUMENTS, AVERAGE_DOCUMENT_LENGTH, DOCUMENT_IDS
     logging.info("Loading search index data...")
 
     dictionary = load_dictionary(DICTIONARY_FILE_PATH)
@@ -43,6 +44,8 @@ def load_index_data():
         TOTAL_DOCUMENTS = 0
     AVERAGE_DOCUMENT_LENGTH = sum(DOCUMENT_LENGTHS.values()) / TOTAL_DOCUMENTS if TOTAL_DOCUMENTS > 0 else 0
     logging.info(f"Average document length calculated: {AVERAGE_DOCUMENT_LENGTH:.2f} characters.")
+
+    DOCUMENT_IDS = DOCUMENT_LENGTHS.keys() if DOCUMENT_LENGTHS else set()
 
     logging.info("Search index data loading complete.")
 
@@ -136,7 +139,7 @@ def index():
 def search():
     logging.debug("Search endpoint called with query: %s", request.args.get('q', ''))
     query = request.args.get('q', '')
-    results = time_it(get_search_results, query, DICTIONARY_ITEMS, DOCUMENT_LENGTHS, AVERAGE_DOCUMENT_LENGTH, TOTAL_DOCUMENTS, POSTINGS_FILE_PATH, STOPWORDS)
+    results = time_it(get_search_results, query, DICTIONARY_ITEMS, DOCUMENT_LENGTHS, AVERAGE_DOCUMENT_LENGTH, TOTAL_DOCUMENTS, DOCUMENT_IDS, POSTINGS_FILE_PATH, STOPWORDS)
     return jsonify(results)
 
 

@@ -106,7 +106,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const titleElement = document.createElement("h3");
       const titleLink = document.createElement("a");
-      titleLink.textContent = `Document ${docId}`;
+      // Fetch the document title asynchronously
+      try {
+        const titleResponse = await fetch(`/get_title/${docId}`);
+        if (titleResponse.ok) {
+          const titleData = await titleResponse.json();
+          titleLink.textContent = titleData.title || `Document ${docId}`;
+        } else {
+          titleLink.textContent = `Document ${docId}`;
+        }
+      } catch (error) {
+        titleLink.textContent = `Document ${docId}`;
+      }
       titleLink.href = `/document/${docId}`;
       // titleLink.target = "_blank";
       titleElement.appendChild(titleLink);

@@ -1,6 +1,7 @@
 import time
 import argparse
 import logging
+import ollama
 from typing import Callable, Any
 
 def setup_logging(args: argparse.Namespace) -> None:
@@ -36,3 +37,23 @@ def time_it(func: Callable[..., Any], *args: Any, **kwargs: Any) -> tuple[float,
     result = func(*args, **kwargs)
     elapsed_time = (time.time() - start_time) * 1000
     return elapsed_time, result
+
+def generate_title_with_ollama(document: str, model: str = "llama3") -> str:
+    """
+    Generates a title for the given document using an LLM via Ollama Python library.
+
+    Args:
+        document (str): The document text to generate a title for.
+        model (str): The Ollama model to use (default: "llama3").
+
+    Returns:
+        str: The generated title as a string.
+    """
+
+    prompt = (
+        "Generate a concise and relevant title for the following document. "
+        "Only return the title string, nothing else.\n\n"
+        f"{document}"
+    )
+    response = ollama.generate(model=model, prompt=prompt)
+    return response["response"].strip()

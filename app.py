@@ -1,6 +1,6 @@
 from flask import Flask, abort, render_template, request, jsonify
 from logic.search import search as get_search_results, load_dictionary, load_document_lengths_from_file, DEFAULT_OUTPUT_DIR
-from logic.utils import setup_logging, time_it
+from logic.utils import generate_title_with_ollama, setup_logging, time_it
 import logging
 import argparse
 from typing import Dict, List, Tuple, Union, Set
@@ -84,6 +84,28 @@ setup_logging(args)
 # Initialise Flask application
 app = Flask(__name__)
 load_index_data()
+
+
+@app.route('/get_title/<int:doc_id>')
+def get_title(doc_id):
+    try:
+        file_path = DOCUMENTS_DIR / f"{doc_id}.txt"
+        if not file_path.is_relative_to(DOCUMENTS_DIR):
+            logging.warning(f"Attempt to access file outside designated directory: {file_path}")
+            abort(403)
+
+        if file_path.is_file():
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            title = generate_title_with_ollama(content)
+            return jsonify({"title": title, "doc_id": doc_id})
+        else:
+            logging.warning(f"Title requested for non-existent document: {doc_id}.txt at {file_path}")
+            return jsonify({"title": f"Document {doc_id}"}), 404
+    except Exception as e:
+        logging.error(f"Error generating title for doc_id {doc_id}: {e}")
+        return jsonify({"title": f"Document {doc_id}"}), 500
+
 
 @app.route('/get_preview/<int:doc_id>')
 def get_preview(doc_id):

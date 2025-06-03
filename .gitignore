@@ -278,3 +278,4 @@ pyrightconfig.json
 ### Application Specific ###
 static/index
 static/documents
+static/images

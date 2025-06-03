@@ -977,7 +977,7 @@ def tokenise_boolean_query(query: str) -> List[str]:
     Operators: ! (not), ^ (and), | (or), ~ (xor), /<number> (near)
     Grouping: (, )
     Phrases: "term1 term2"
-    Escape sequences: \ (to escape special characters)
+    Escape sequences: \\ (to escape special characters)
 
     Args:
         query (str): The boolean query string.
@@ -1316,7 +1316,7 @@ def boolean_search(query: str,
     The query is expected to be a sequence of terms and operators in infix notation.
     Operators: ! (not), ^ (and), | (or), ~ (xor), /<number> (near)
     Grouping: (, )
-    Escape sequences: \ (to escape special characters)
+    Escape sequences: \\ (to escape special characters)
 
     Args:
         query (str): The boolean query string.
@@ -1833,11 +1833,12 @@ def main() -> int:
 
     #extract_documents(Path("/home/malik/Nextcloud/University/Semester 6/Information Retrieval/Aufgaben/collectionandqueries.tar.gz"),
     #                  "collection.tsv",
-    #                  Path("/home/malik/Nextcloud/University/Semester 6/Information Retrieval/Aufgaben/output/documents"))
+    #                  Path("/home/malik/Nextcloud/University/Semester 6/Information Retrieval/Aufgaben/output/documents",
+    #                  replace=True))
 
-    #calculate_and_save_document_lengths(
-    #    source_path=Path("/home/malik/Nextcloud/University/Semester 6/Information Retrieval/Aufgaben/collectionandqueries.tar.gz"),
-    #    content_file_name="collection.tsv")
+    calculate_and_save_document_lengths(
+        source_path=Path("/home/malik/Nextcloud/University/Semester 6/Information Retrieval/Aufgaben/collectionandqueries.tar.gz"),
+        content_file_name="collection.tsv")
     
     return 0
 

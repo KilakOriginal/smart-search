@@ -19,9 +19,8 @@ body {
 }
 
 .container {
-    max-width: 35vw;
-    width: 100%;
-    margin: 80px auto 0 auto;
+    width: 50vw;
+    margin: 0;
     background: none;
     padding: 0;
     border-radius: 0;
@@ -32,10 +31,9 @@ body {
 }
 
 .other-container {
-    width: 100%;
-    max-width: 20vw;
+    width: 25vw;
     height: 100vh;
-    margin: 0 auto;
+    margin: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -45,6 +43,20 @@ body {
 .other-container img {
     width: 15vw;
     margin: 0;
+}
+
+@media (max-width: 1300px) {
+    .other-container {
+        width: 0;
+        visibility: hidden;
+    }
+
+    .container {
+        max-width: 100%;
+        width: 100%;
+        margin: 0 auto;
+        padding: 20px;
+    }
 }
 
 h1 {

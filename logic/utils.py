@@ -38,7 +38,7 @@ def time_it(func: Callable[..., Any], *args: Any, **kwargs: Any) -> tuple[float,
     elapsed_time = (time.time() - start_time) * 1000
     return elapsed_time, result
 
-def generate_title_with_ollama(document: str, model: str = "llama3") -> str:
+def generate_title_with_ollama(document: str, model: str = "tinyllama") -> str:
     """
     Generates a title for the given document using an LLM via Ollama Python library.
 
@@ -56,4 +56,5 @@ def generate_title_with_ollama(document: str, model: str = "llama3") -> str:
         f"{document}"
     )
     response = ollama.generate(model=model, prompt=prompt)
-    return response["response"].strip()
+    logging.debug(f"Generated title response: {response['response'].strip()}")
+    return response['response'].strip()

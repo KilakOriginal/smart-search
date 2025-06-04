@@ -167,8 +167,6 @@ def extract_documents(source_path: Path, content_file_name: str, destination_dir
                         document_id = document_id.strip()
                         document = document.strip()
 
-                        title = generate_title_with_ollama(document)
-
                         output_file_path = destination_directory / f"{document_id}.txt"
 
                         if output_file_path.is_file() and not replace:
@@ -176,7 +174,7 @@ def extract_documents(source_path: Path, content_file_name: str, destination_dir
                             continue
 
                         with open(output_file_path, "w", encoding="utf-8") as output_file:
-                            output_file.write(f"{title}\t{document}")
+                            output_file.write(document)
                     except Exception as e:
                         logging.error(f"Error processing line {line_idx} ('{line.decode().strip()[:50]}...'): {e}")
                         continue

@@ -1,5 +1,5 @@
 from flask import Flask, abort, render_template, request, jsonify
-from logic.search import search as get_search_results, load_dictionary, load_document_lengths_from_file, DEFAULT_OUTPUT_DIR
+from logic.search import search as get_search_results, load_dictionary, load_document_lengths, DEFAULT_OUTPUT_DIR
 from logic.utils import generate_title_with_ollama, setup_logging, time_it
 import logging
 import argparse
@@ -34,7 +34,7 @@ def load_index_data():
         logging.error(f"Failed to load main dictionary from {DICTIONARY_FILE_PATH}. Search will be impaired.")
         DICTIONARY_ITEMS = []
 
-    DOCUMENT_LENGTHS = load_document_lengths_from_file(DOCUMENT_LENGTHS_FILE_PATH)
+    DOCUMENT_LENGTHS = load_document_lengths(DOCUMENT_LENGTHS_FILE_PATH)
     if DOCUMENT_LENGTHS:
         TOTAL_DOCUMENTS = len(DOCUMENT_LENGTHS)
         logging.info(f"Document lengths loaded for {TOTAL_DOCUMENTS} documents.")

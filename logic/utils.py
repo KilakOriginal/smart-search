@@ -112,6 +112,30 @@ def time_it(func: Callable[..., Any], *args: Any, **kwargs: Any) -> tuple[float,
     elapsed_time = (time.time() - start_time) * 1000
     return elapsed_time, result
 
+def get_image_paths(directory: Path, image_extensions: Set[str] = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff"}) -> Set[Path]:
+    """
+    Recursively collects all image file paths in a directory.
+
+    Args:
+        directory (Path): The directory to search for images.
+        image_extensions (Set[str]): Set of image file extensions to look for (default includes common formats).
+
+    Returns:
+        Set[Path]: A set of paths to image files.
+    """
+    if not directory.is_dir():
+        logging.error(f"Directory '{directory}' does not exist or is not a directory.")
+        return set()
+
+    image_paths = set()
+
+    for path in directory.rglob("*"):
+        if path.is_file() and path.suffix.lower() in image_extensions:
+            image_paths.add(path)
+            logging.debug(f"Found image: {path}")
+
+    return image_paths
+
 def generate_title_with_ollama(document: str, model: str = "tinyllama") -> str:
     """
     Generates a title for the given document using an LLM via Ollama Python library.

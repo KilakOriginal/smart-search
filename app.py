@@ -1,12 +1,13 @@
-from flask import Flask, abort, render_template, request, jsonify
+from flask import Flask, abort, render_template, request, jsonify, send_from_directory
 from logic.search import search as get_search_results, load_dictionary, load_document_lengths, DEFAULT_OUTPUT_DIR
-from logic.utils import generate_title_with_ollama, setup_logging, time_it
+from logic.utils import generate_title_with_ollama, setup_logging, time_it, get_image_paths
 import logging
 import argparse
 from typing import Dict, List, Tuple, Union, Set
 from pathlib import Path
 
 DOCUMENTS_DIR = DEFAULT_OUTPUT_DIR.parent / "documents"
+IMAGE_DIR = DEFAULT_OUTPUT_DIR.parent / "images"
 
 DICTIONARY_ITEMS: Union[List[Tuple[str, int]], None] = None
 DOCUMENT_LENGTHS: Union[Dict[int, int], None] = None
@@ -152,6 +153,31 @@ def get_document_page(doc_id):
     except Exception as e:
         logging.error(f"Error serving document page for doc_id {doc_id}: {e}")
         abort(500) # Internal server error
+
+@app.route('/get_images')
+def get_images():
+    try:
+        image_paths = get_image_paths(IMAGE_DIR)
+        if not image_paths:
+            logging.warning("No images found in the specified directory.")
+            return jsonify({"images": []}), 404  # Not found
+
+        logging.debug(f"Found {len(image_paths)} images in {IMAGE_DIR}")
+        logging.debug(f"Image paths: {image_paths}")
+
+        images = [{"path": f"/images/{path.name}", "name": path.name} for path in image_paths]
+        return jsonify({"images": images})    
+    except Exception as e:
+        logging.error(f"Error fetching images: {e}")
+        return jsonify({"error": "Error loading images."}), 500 # Internal server error
+
+@app.route('/images/<filename>')
+def serve_image(filename):
+    """Serve images from the IMAGE_DIR directory."""
+    try:
+        return send_from_directory(IMAGE_DIR, filename)
+    except FileNotFoundError:
+        abort(404)
 
 @app.route('/')
 def index():

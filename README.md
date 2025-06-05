@@ -6,7 +6,8 @@
 1. Create a virtual environment (optional, but strongly recommended)
 2. Install the requirements using `pip install -r requirements.txt`
 3. Add a postings file, dictionary and document length file to `static/index/` and export the documents to `static/documents/` or change the paths in `app.py` or `logic/search.py` to point to your own files.
-4. Install ollama and pull the `llama3` model using `ollama pull llama3`
+4. If you want ads to be displayed, add the images to `static/images/` or change the path in `app.py` to point to the desired directory.
+5. Install ollama and pull the `llama3` model using `ollama pull llama3`
 
 ## Usage
 1. Start the ollama server using `ollama serve`

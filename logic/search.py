@@ -815,7 +815,9 @@ def phrase_search(phrase: str,
         if phrase_starts_document:
             final_phrase_matches.append((document_id, len(phrase_starts_document), sorted(phrase_starts_document)))
 
-    return list(set(bag_of_words_search(phrase, dictionary_items, postings_file_path, stop_words)).union([(phrase, final_phrase_matches)]))
+    if not final_phrase_matches:
+        return bag_of_words_search(phrase, dictionary_items, postings_file_path, stop_words)
+    return [(phrase, final_phrase_matches)]
 
 def bag_of_words_search(phrase: str,
                   dictionary_items: List[Tuple[str, int]],
@@ -994,13 +996,12 @@ def get_relevant_documents(ranked_results: List[Tuple[int, float]], threshold: f
             break
     return relevant_documents
 
-def precision_at_k(ranked_results: List[Tuple[int, float]], relevant_documents: List[int], k: int) -> float:
+def precision_at_k(ranked_results: List[Tuple[int, float]], k: int) -> float:
     """
     Calculates the precision at k for a ranked list of documents.
 
     Args:
         ranked_results: A list of (document_id, score) tuples, sorted by score.
-        relevant_documents: A set of relevant document IDs.
         k: The number of top results to consider.
 
     Returns:
@@ -1013,52 +1014,40 @@ def precision_at_k(ranked_results: List[Tuple[int, float]], relevant_documents: 
     if not top_k_docs:
         return 0.0
 
-    relevant_retrieved_count = len(set(top_k_docs) & relevant_documents)
+    relevant_retrieved_count = sum(1 for document_id in top_k_docs if document_id in get_relevant_documents(ranked_results))
             
     return relevant_retrieved_count / k
 
-def map_k(query_results: List[List[Tuple[int, float]]], relevant_documents: List[Set[int]], k: int) -> float:
+def map_k(ranked_results: List[Tuple[int, float]], k: int) -> float:
     """
-    Computes the Mean Average Precision (MAP) at k for a set of queries.
+    Computes the Mean Average Precision (MAP) at k for a query.
 
     Args:
-        query_results: A list of ranked results for each query.
-        relevant_documents: A list of sets of relevant documents for each query.
+        ranked_results: A list of ranked results for each query.
         k: The number of top results to consider.
 
     Returns:
         The Mean Average Precision (MAP) at k.
     """
-    if not query_results:
+    if not ranked_results:
         return 0.0
-        
-    average_precisions = []
-    for ranked_results, relevant_documents in zip(query_results, relevant_documents):
-        if not relevant_documents:
-            average_precisions.append(0.0)
-            continue
 
-        top_k_results = ranked_results[:k]
-        
-        precision_sum = 0.0
-        relevant_hits = 0
-        for i, (document_id, _) in enumerate(top_k_results):
-            if document_id in relevant_documents:
-                relevant_hits += 1
-                precision_at_i = relevant_hits / (i + 1)
-                precision_sum += precision_at_i
-        
-        total_relevant = len(relevant_documents)
-        if total_relevant == 0:
-            ap = 0.0
-        else:
-            ap = precision_sum / total_relevant
-        average_precisions.append(ap)
+    relevant_documents = get_relevant_documents(ranked_results)
 
-    if not average_precisions:
+    if not relevant_documents:
         return 0.0
-        
-    return sum(average_precisions) / len(average_precisions)
+
+    precision_sum = 0.0
+
+    for i in range(min(k, len(ranked_results))):
+        document_id, _ = ranked_results[i]
+        if document_id in relevant_documents:
+            precision_sum += precision_at_k(ranked_results[:i + 1], i + 1)
+    
+    if len(relevant_documents) == 0:
+        return 0.0
+
+    return precision_sum / len(relevant_documents) if len(relevant_documents) > 0 else 0.0
 
 def search(
     query: str,
@@ -1069,7 +1058,7 @@ def search(
     document_ids: Set[int] = None,
     postings_file_path: Path = DEFAULT_OUTPUT_DIR / "postings",
     stop_words: List[str] = STOPWORDS
-) -> Union[List[Tuple[int, float]], None]:
+) -> List[Tuple[int, float]]:
     """
     Determines the type of search, executes it, and ranks results using BM25+.
 

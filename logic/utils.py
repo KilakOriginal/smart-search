@@ -923,6 +923,25 @@ def load_document_lengths(file_path: Path) -> Union[Dict[int, int], None]:
         logging.error(f"Unexpected error loading document lengths from '{file_path}': {e}")
         return None
 
+def precision_at_k(ranked_documents: List[Tuple[int, float]], k: int = 10, threshhold: float = 0.33) -> float:
+    """
+    Calculates the precision at k for a ranked list of documents.
+
+    Args:
+        ranked_documents (list[tuple[int, float]]): List of tuples where each tuple contains
+            (document_id, score). The list is expected to be sorted by score in descending order.
+        k (int): The number of top documents to consider for precision calculation.
+        threshhold (float): The score threshold to consider a document as relevant.
+
+    Returns:
+        float: Precision at k, which is the ratio of relevant documents in the top k results.
+    """
+    if not ranked_documents or k <= 0:
+        return 0.0
+
+    relevant_count = sum(1 for document_id, score in ranked_documents[:k] if score > threshhold)
+    return relevant_count / min(k, len(ranked_documents))
+
 
 def main():
     args = parse_args()

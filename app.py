@@ -1,5 +1,5 @@
 from flask import Flask, abort, render_template, request, jsonify, send_from_directory
-from logic.search import search as get_search_results, load_dictionary, load_document_lengths, precision_at_k, map_k, get_relevant_documents, DEFAULT_OUTPUT_DIR
+from logic.search import search as get_search_results, load_dictionary, load_document_lengths, precision_at_k, map_k, DEFAULT_OUTPUT_DIR
 from logic.utils import generate_title_with_ollama, setup_logging, time_it, get_image_paths
 import logging
 import argparse
@@ -189,8 +189,8 @@ def search():
     query = request.args.get('q', '')
     results = time_it(get_search_results, query, DICTIONARY_ITEMS, DOCUMENT_LENGTHS, AVERAGE_DOCUMENT_LENGTH, TOTAL_DOCUMENTS, DOCUMENT_IDS, POSTINGS_FILE_PATH, STOPWORDS)
 
-    logging.info(f"Precision at 10: {precision_at_k(results, get_relevant_documents(results), 10):.2f}")
-    logging.info(f"Mean Average Precision at 10: {map_k(results, get_relevant_documents(results), 10):.2f}")
+    logging.info(f"Precision at 10: {precision_at_k(results[1], 10):.2f}")
+    logging.info(f"Mean Average Precision at 10: {map_k(results[1], 10):.2f}")
 
     return jsonify(results)
 

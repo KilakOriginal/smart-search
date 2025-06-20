@@ -209,7 +209,7 @@ def tokenise_boolean_query(query: str) -> List[str]:
                         phrase_content_characters.append('\\') # Treat as literal backslash
                         i += 1
                 elif phrase_character == '"':  # End of phrase
-                    tokens.append(f'"{''.join(phrase_content_characters)}"')
+                    tokens.append(f'"{"".join(phrase_content_characters)}"')
                     i += 1
                     phrase_closed = True
                     break
@@ -219,7 +219,7 @@ def tokenise_boolean_query(query: str) -> List[str]:
             
             if not phrase_closed:
                 logging.warning("Unterminated phrase in query. Treating the content as a literal term including the initial quote.")
-                tokens.append(f'"{''.join(phrase_content_characters)}')
+                tokens.append(f'"{"".join(phrase_content_characters)}')
             continue
 
         elif char == '\\':  # Escape character (outside of a phrase)
@@ -815,10 +815,7 @@ def phrase_search(phrase: str,
         if phrase_starts_document:
             final_phrase_matches.append((document_id, len(phrase_starts_document), sorted(phrase_starts_document)))
 
-    if not final_phrase_matches:
-        return bag_of_words_search(phrase, dictionary_items, postings_file_path, stop_words)
-    
-    return [(phrase, final_phrase_matches)]
+    return list(set(bag_of_words_search(phrase, dictionary_items, postings_file_path, stop_words)).union([(phrase, final_phrase_matches)]))
 
 def bag_of_words_search(phrase: str,
                   dictionary_items: List[Tuple[str, int]],
@@ -978,6 +975,91 @@ def bm25_plus_rankings(
 
     return sorted(bm25_scores.items(), key=lambda item: item[1], reverse=True)
 
+def get_relevant_documents(ranked_results: List[Tuple[int, float]], threshold: float = 0.4) -> List[int]:
+    """
+    Extracts relevant document IDs from ranked results based on a score threshold.
+
+    Args:
+        ranked_results: A list of (document_id, score) tuples, sorted by score.
+        threshold: The score threshold to consider a document as relevant.
+
+    Returns:
+        A set of relevant document IDs.
+    """
+    relevant_documents = []
+    for document_id, score in ranked_results:
+        if score >= threshold:
+            relevant_documents.append(document_id)
+        else:
+            break
+    return relevant_documents
+
+def precision_at_k(ranked_results: List[Tuple[int, float]], relevant_documents: List[int], k: int) -> float:
+    """
+    Calculates the precision at k for a ranked list of documents.
+
+    Args:
+        ranked_results: A list of (document_id, score) tuples, sorted by score.
+        relevant_documents: A set of relevant document IDs.
+        k: The number of top results to consider.
+
+    Returns:
+        The precision at k.
+    """
+    if k <= 0:
+        return 0.0
+    
+    top_k_docs = [document_id for document_id, _ in ranked_results[:k]]
+    if not top_k_docs:
+        return 0.0
+
+    relevant_retrieved_count = len(set(top_k_docs) & relevant_documents)
+            
+    return relevant_retrieved_count / k
+
+def map_k(query_results: List[List[Tuple[int, float]]], relevant_documents: List[Set[int]], k: int) -> float:
+    """
+    Computes the Mean Average Precision (MAP) at k for a set of queries.
+
+    Args:
+        query_results: A list of ranked results for each query.
+        relevant_documents: A list of sets of relevant documents for each query.
+        k: The number of top results to consider.
+
+    Returns:
+        The Mean Average Precision (MAP) at k.
+    """
+    if not query_results:
+        return 0.0
+        
+    average_precisions = []
+    for ranked_results, relevant_documents in zip(query_results, relevant_documents):
+        if not relevant_documents:
+            average_precisions.append(0.0)
+            continue
+
+        top_k_results = ranked_results[:k]
+        
+        precision_sum = 0.0
+        relevant_hits = 0
+        for i, (document_id, _) in enumerate(top_k_results):
+            if document_id in relevant_documents:
+                relevant_hits += 1
+                precision_at_i = relevant_hits / (i + 1)
+                precision_sum += precision_at_i
+        
+        total_relevant = len(relevant_documents)
+        if total_relevant == 0:
+            ap = 0.0
+        else:
+            ap = precision_sum / total_relevant
+        average_precisions.append(ap)
+
+    if not average_precisions:
+        return 0.0
+        
+    return sum(average_precisions) / len(average_precisions)
+
 def search(
     query: str,
     dictionary_items: List[Tuple[str, int]],
@@ -1068,9 +1150,9 @@ def main() -> int:
     #                  Path("/home/malik/Nextcloud/University/Semester 6/Information Retrieval/Aufgaben/output/documents",
     #                  replace=True))
 
-    calculate_and_save_document_lengths(
-        source_path=Path("/home/malik/Nextcloud/University/Semester 6/Information Retrieval/Aufgaben/collectionandqueries.tar.gz"),
-        content_file_name="collection.tsv")
+    #calculate_and_save_document_lengths(
+    #    source_path=Path("/home/malik/Nextcloud/University/Semester 6/Information Retrieval/Aufgaben/collectionandqueries.tar.gz"),
+    #    content_file_name="collection.tsv")
     
     return 0
 
